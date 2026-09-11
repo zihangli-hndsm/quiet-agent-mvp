@@ -17,10 +17,16 @@ public final class Store {
  public String getRequest(){return prefs.getString("request","把这个目录里的文件去重，按类型归档");}
  public void setRequest(String request){prefs.edit().putString("request",request).apply();}
  public File jobsRoot(){File f=new File(context.getFilesDir(),"jobs");f.mkdirs();return f;}
+ public File receiptJobsRoot(){File f=new File(context.getFilesDir(),"receipt-jobs");f.mkdirs();return f;}
+ public File jobDir(String id){
+  if(id==null)throw new IllegalArgumentException("无效任务编号");
+  if(id.matches("job-[0-9]+-[a-f0-9]{8}"))return new File(jobsRoot(),id);
+  if(id.matches("receipt-[0-9]+-[a-f0-9]{8}"))return new File(receiptJobsRoot(),id);
+  throw new IllegalArgumentException("无效任务编号");
+ }
  public File getJobFile(String id,String name){
-  if(id==null||!id.matches("job-[0-9]+-[a-f0-9]{8}"))throw new IllegalArgumentException("无效任务编号");
-  if(!name.equals("archive.zip")&&!name.equals("manifest.json")&&!name.equals("summary.html"))throw new IllegalArgumentException("无效结果文件");
-  return new File(new File(jobsRoot(),id),name);
+  if(!name.equals("archive.zip")&&!name.equals("manifest.json")&&!name.equals("summary.html")&&!name.equals("receipts.csv")&&!name.equals("audit-snapshot")&&!name.equals("credential"))throw new IllegalArgumentException("无效结果文件");
+  return new File(jobDir(id),name);
  }
  private AtomicFile statusFile(){return new AtomicFile(new File(context.getFilesDir(),"status.json"));}
  public String readStatus(){synchronized(LOCK){

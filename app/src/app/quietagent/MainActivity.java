@@ -1,6 +1,7 @@
 package app.quietagent;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
@@ -27,10 +28,18 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import app.quietagent.core.Plan;
+import app.quietagent.security.Authorization;
+import app.quietagent.security.AtomicFileStateStore;
+import app.quietagent.security.AuthorizationManager;
+import app.quietagent.security.TaskSpec;
+import app.quietagent.ui.VcFlowView;
 
 import org.json.JSONObject;
 
+import java.io.File;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.List;
 
 /** Main screen for the offline, read-only file assistant. */
 public final class MainActivity extends Activity {
@@ -59,6 +68,7 @@ public final class MainActivity extends Activity {
     private boolean qaMode;
     private String lastPreviewedRequest;
     private String errorText;
+    private VcFlowView vcFlow;
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
     private final Runnable statusPoller = new Runnable() {
         @Override public void run() {
@@ -76,8 +86,10 @@ public final class MainActivity extends Activity {
             getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
         }
         store = new Store(this);
+        recoverInterruptedTask();
         qaMode = getIntent() != null && getIntent().getBooleanExtra("qa_test", false);
-        buildScreen();
+        if (qaMode) buildScreen();
+        else buildVcScreen();
     }
 
     @Override protected void onResume() {
@@ -218,6 +230,88 @@ public final class MainActivity extends Activity {
         refreshSource();
     }
 
+    private void buildVcScreen() {
+        vcFlow = new VcFlowView(this, new VcFlowView.Callback() {
+            @Override public boolean canStartTask() { return !TaskService.isRunning(); }
+            @Override public String onAuthorized(TaskSpec spec, Authorization authorization, List<Uri> photos, Uri tree) {
+                try {
+                    List<String> sources = new ArrayList<String>();
+                    if (spec.type() == TaskSpec.TaskType.OCR) {
+                        for (Uri uri : photos) sources.add(uri.toString());
+                    } else if (tree != null) {
+                        sources.add(tree.toString());
+                    }
+                    String id = new ReceiptJobStore(MainActivity.this).createPending(spec, authorization.nonce(), sources);
+                    Intent run = new Intent(MainActivity.this, TaskService.class)
+                            .setAction(TaskService.ACTION_RUN).putExtra("jobId", id);
+                    if (Build.VERSION.SDK_INT >= 26) startForegroundService(run); else startService(run);
+                    return id;
+                } catch (Exception error) {
+                    throw new IllegalStateException("无法保存并提交任务：" + safeMessage(error), error);
+                }
+            }
+            @Override public void onReportRequested(String jobId) {
+                startActivity(new Intent(MainActivity.this, ReportActivity.class).putExtra("jobId", jobId));
+            }
+            @Override public void onExportRequested(String jobId) {
+                exportV2(jobId);
+            }
+            @Override public void onAuditRequested(String auditJson) {
+                new AlertDialog.Builder(MainActivity.this).setTitle("执行审计凭证")
+                        .setMessage(auditJson).setPositiveButton("关闭", null).show();
+            }
+            @Override public void onClearTaskDataRequested(String jobId) {
+                clearV2Job(jobId);
+            }
+        });
+        setContentView(vcFlow);
+    }
+
+    private AuthorizationManager v2Authorizer() {
+        return new AuthorizationManager(new AtomicFileStateStore(
+                new File(getFilesDir(), "security/authorization.state")));
+    }
+
+    private void recoverInterruptedTask() {
+        if (TaskService.isRunning()) return;
+        try {
+            JSONObject last = new JSONObject(store.readStatus());
+            String id = last.optString("id", "");
+            if ("INTERRUPTED".equals(last.optString("state")) && id.startsWith("receipt-")) {
+                new ReceiptJobStore(this).recoverInterrupted(id, v2Authorizer());
+            }
+        } catch (Exception ignored) { }
+    }
+
+    private void exportV2(String jobId) {
+        try {
+            ReceiptJobStore jobs = new ReceiptJobStore(this);
+            AuthorizationManager manager = v2Authorizer();
+            jobs.recordEventAndPublishCredential(jobId, AuthorizationManager.EXPORT_CONFIRMED, manager);
+            Uri uri = ShareProvider.uriFor(this, jobId, "archive.zip");
+            Intent share = new Intent(Intent.ACTION_SEND).setType("application/zip")
+                    .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            share.setClipData(ClipData.newRawUri("archive.zip", uri));
+            startActivity(Intent.createChooser(share, "选择导出去向"));
+            jobs.recordEventAndPublishCredential(jobId, AuthorizationManager.SHARE_SHEET_OPENED, manager);
+        } catch (Exception error) {
+            new AlertDialog.Builder(this).setTitle("暂时无法导出")
+                    .setMessage(safeMessage(error)).setPositiveButton("知道了", null).show();
+        }
+    }
+
+    private void clearV2Job(String jobId) {
+        try {
+            ReceiptJobStore jobs = new ReceiptJobStore(this);
+            jobs.recordEventAndPublishCredential(jobId, AuthorizationManager.CLEARED, v2Authorizer());
+            jobs.deletePrivateJob(jobId);
+            store.writeStatus(new JSONObject().put("state", "IDLE").put("message", "任务本地数据已清除"));
+        } catch (Exception error) {
+            new AlertDialog.Builder(this).setTitle("未能清除")
+                    .setMessage(safeMessage(error)).setPositiveButton("知道了", null).show();
+        }
+    }
+
     private void addQaPanel(LinearLayout root) {
         LinearLayout qa = card(this);
         root.addView(qa, lp(-1, -2, 0, 0, 0, 12));
@@ -261,6 +355,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (vcFlow != null && vcFlow.handleActivityResult(requestCode, resultCode, data)) return;
         if (requestCode != REQUEST_FOLDER || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
         try {
@@ -383,8 +478,9 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshStatus() {
-        if (store == null || statusValue == null) return;
-        if (errorText != null) return;
+        if (store == null) return;
+        if (vcFlow == null && statusValue == null) return;
+        if (vcFlow == null && errorText != null) return;
         String raw;
         try { raw = store.readStatus(); } catch (RuntimeException ex) { return; }
         if (raw == null || raw.trim().isEmpty()) return;
@@ -395,6 +491,13 @@ public final class MainActivity extends Activity {
             int done = o.optInt("done", 0);
             int total = o.optInt("total", 0);
             String message = o.optString("message", "");
+            if (vcFlow != null) {
+                Long totalCents = o.has("recognizedTotalCents") && !o.isNull("recognizedTotalCents")
+                        ? Long.valueOf(o.optLong("recognizedTotalCents")) : null;
+                vcFlow.updateTaskStatus(o.optString("id", ""), state, o.optInt("selected", 0),
+                        o.optInt("unique", 0), o.optInt("duplicates", 0), totalCents, message);
+                return;
+            }
             StringBuilder line = new StringBuilder("状态：").append(stateLabel(state));
             String phaseLabel = phaseLabel(phase);
             if (!phaseLabel.isEmpty()) line.append(" · ").append(phaseLabel);
