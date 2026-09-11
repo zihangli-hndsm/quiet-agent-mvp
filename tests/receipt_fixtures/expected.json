@@ -1,0 +1,24 @@
+{
+  "fixtureVersion": 1,
+  "fileCount": 12,
+  "clearCount": 8,
+  "duplicateCount": 2,
+  "ambiguousCount": 1,
+  "nonReceiptCount": 1,
+  "uniqueReceiptCount": 8,
+  "totalAmount": "380.80",
+  "records": [
+    {"sourcePath":"receipt-01.png","category":"清晰","layout":"thermal","merchant":"青禾便利店","date":"2024-03-01","amount":"18.80","duplicateOf":null},
+    {"sourcePath":"receipt-02.png","category":"清晰","layout":"thermal","merchant":"海风咖啡","date":"2024-03-02","amount":"42.50","duplicateOf":null},
+    {"sourcePath":"receipt-03.png","category":"清晰","layout":"formal","merchant":"星桥书店","date":"2024-03-03","amount":"9.90","duplicateOf":null},
+    {"sourcePath":"receipt-04.png","category":"清晰","layout":"formal","merchant":"南站便利","date":"2024-03-04","amount":"128.00","duplicateOf":null},
+    {"sourcePath":"receipt-05.png","category":"清晰","layout":"card","merchant":"小满食堂","date":"2024-03-05","amount":"36.60","duplicateOf":null},
+    {"sourcePath":"receipt-06.png","category":"清晰","layout":"card","merchant":"云朵超市","date":"2024-03-06","amount":"75.00","duplicateOf":null},
+    {"sourcePath":"receipt-07.png","category":"清晰","layout":"thermal","merchant":"纸飞机文具","date":"2024-03-07","amount":"16.80","duplicateOf":null},
+    {"sourcePath":"receipt-08.png","category":"清晰","layout":"formal","merchant":"溪谷药房","date":"2024-03-08","amount":"53.20","duplicateOf":null},
+    {"sourcePath":"duplicate-01.png","category":"重复","layout":"thermal","merchant":"青禾便利店","date":"2024-03-01","amount":"18.80","duplicateOf":"receipt-01.png"},
+    {"sourcePath":"duplicate-02.png","category":"重复","layout":"formal","merchant":"星桥书店","date":"2024-03-03","amount":"9.90","duplicateOf":"receipt-03.png"},
+    {"sourcePath":"ambiguous-amount.png","category":"金额模糊","layout":"card","merchant":"晚风小馆","date":"2024-03-09","amount":null,"duplicateOf":null},
+    {"sourcePath":"not-a-receipt.png","category":"非票据","layout":"card","merchant":"城市活动通知","date":"2024-03-10","amount":null,"duplicateOf":null}
+  ]
+}

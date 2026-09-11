@@ -1,7 +1,8 @@
 param(
     [string]$Jdk=$env:QUIET_JDK,
     [string]$BuildTools=$env:QUIET_BUILD_TOOLS,
-    [string]$AndroidJar=$env:QUIET_ANDROID_JAR
+    [string]$AndroidJar=$env:QUIET_ANDROID_JAR,
+    [string]$FixtureSource=$env:QUIET_RECEIPT_FIXTURES
 )
 $ErrorActionPreference='Stop'
 $taskRepo=Split-Path -Parent $PSScriptRoot
@@ -14,7 +15,15 @@ $mainKeystore="$taskRepo\build\debug.keystore"
 foreach($taskPath in @("$Jdk\bin\javac.exe","$Jdk\bin\jar.exe","$Jdk\bin\keytool.exe","$BuildTools\aapt.exe","$BuildTools\zipalign.exe","$BuildTools\lib\d8.jar","$BuildTools\lib\apksigner.jar",$AndroidJar,$mainClassesJar,$mainKeystore)){if(!(Test-Path -LiteralPath $taskPath)){throw "Missing test build dependency: $taskPath (run scripts/build.ps1 first)"}}
 
 $taskOut="$taskRepo\build\tests"
-New-Item -ItemType Directory -Force "$taskOut\classes","$taskOut\dex" | Out-Null
+if(!$FixtureSource){$FixtureSource="$taskRepo\samples\receipts"}
+if(!(Test-Path -LiteralPath $FixtureSource)){throw "Missing receipt fixture source: $FixtureSource"}
+$fixtureFiles=@(Get-ChildItem -LiteralPath $FixtureSource -Filter '*.png' -File | Sort-Object Name)
+if($fixtureFiles.Count -ne 12){throw "Receipt fixture source must contain exactly 12 PNG files, found $($fixtureFiles.Count)"}
+$assetRoot="$taskOut\assets"
+$assetReceipts="$assetRoot\receipts"
+New-Item -ItemType Directory -Force "$taskOut\classes","$taskOut\dex","$assetReceipts" | Out-Null
+Get-ChildItem -LiteralPath $assetReceipts -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+foreach($fixture in $fixtureFiles){Copy-Item -LiteralPath $fixture.FullName -Destination (Join-Path $assetReceipts $fixture.Name) -Force}
 $taskClasses=(Resolve-Path "$taskOut\classes").Path
 if(!$taskClasses.StartsWith((Resolve-Path $taskOut).Path+[IO.Path]::DirectorySeparatorChar)){throw 'Invalid test compiler output path'}
 Get-ChildItem -LiteralPath $taskClasses -Force | Remove-Item -Recurse -Force
@@ -25,7 +34,7 @@ if($LASTEXITCODE){throw 'Instrumentation Java compilation failed'}
 if($LASTEXITCODE){throw 'Instrumentation classes JAR failed'}
 & "$Jdk\bin\java.exe" -cp "$BuildTools\lib\d8.jar" com.android.tools.r8.D8 --lib $AndroidJar --min-api 26 --output "$taskOut\dex" "$taskOut\classes.jar"
 if($LASTEXITCODE){throw 'Instrumentation DEX compilation failed'}
-& "$BuildTools\aapt.exe" package -f -M "$taskRepo\tests\android\AndroidManifest.xml" -I $AndroidJar -F "$taskOut\unsigned.apk"
+& "$BuildTools\aapt.exe" package -f -M "$taskRepo\tests\android\AndroidManifest.xml" -I $AndroidJar -A $assetRoot -F "$taskOut\unsigned.apk"
 if($LASTEXITCODE){throw 'Instrumentation APK packaging failed'}
 & "$Jdk\bin\jar.exe" uf "$taskOut\unsigned.apk" -C "$taskOut\dex" classes.dex
 if($LASTEXITCODE){throw 'Instrumentation DEX insertion failed'}

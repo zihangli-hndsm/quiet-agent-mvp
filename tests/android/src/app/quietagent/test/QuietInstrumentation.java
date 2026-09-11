@@ -5,6 +5,8 @@ import android.app.Instrumentation;
 import android.app.KeyguardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -17,8 +19,13 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 
 import app.quietagent.DemoSource;
+import app.quietagent.ReceiptJobStore;
 import app.quietagent.Store;
 import app.quietagent.TaskService;
+import app.quietagent.security.AtomicFileStateStore;
+import app.quietagent.security.Authorization;
+import app.quietagent.security.AuthorizationManager;
+import app.quietagent.security.TaskSpec;
 
 import org.json.JSONObject;
 
@@ -27,6 +34,7 @@ import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.LinkedHashMap;
@@ -36,6 +44,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import java.util.Set;
 
 /**
  * Dependency-free instrumentation runner. Invoke with:
@@ -47,6 +56,12 @@ public final class QuietInstrumentation extends Instrumentation {
     private static final int QA_FILES = 24;
     private static final int QA_BYTES = 2 * 1024 * 1024;
     private static final String REQUEST = "去重，按类型归档";
+    private static final long RECEIPT_LIMIT_MS = 180_000L;
+    private static final String[] RECEIPT_FIXTURES = new String[] {
+            "receipt-01.png", "receipt-02.png", "receipt-03.png", "receipt-04.png",
+            "receipt-05.png", "receipt-06.png", "receipt-07.png", "receipt-08.png",
+            "duplicate-01.png", "duplicate-02.png", "ambiguous-amount.png", "not-a-receipt.png"
+    };
     private Bundle arguments;
     private Activity qaActivity;
     private final List<File> createdQaFiles = new ArrayList<File>();
@@ -64,13 +79,17 @@ public final class QuietInstrumentation extends Instrumentation {
         JSONObject result = new JSONObject();
         int code = 0;
         try {
-            if (!"smoke".equals(selected) && !"cancel".equals(selected) && !"external".equals(selected) && !"export".equals(selected) && !"ui".equals(selected)) {
-                throw new IllegalArgumentException("scenario must be smoke or cancel");
+            if (!"smoke".equals(selected) && !"cancel".equals(selected) && !"external".equals(selected) && !"export".equals(selected) && !"ui".equals(selected) && !"receipt".equals(selected) && !"permission".equals(selected) && !"interrupt_start".equals(selected) && !"recover".equals(selected)) {
+                throw new IllegalArgumentException("unknown scenario");
             }
             if ("smoke".equals(selected)) runSmoke(result);
             else if("external".equals(selected)) runExternal(result);
             else if("export".equals(selected)) runExport(result);
             else if("ui".equals(selected)) runUi(result);
+            else if("receipt".equals(selected)) runReceipt(result);
+            else if("permission".equals(selected)) runPermissionDenied(result);
+            else if("interrupt_start".equals(selected)) runInterruptStart(result);
+            else if("recover".equals(selected)) runRecover(result);
             else runCancel(result);
             result.put("ok", true);
         } catch (Throwable error) {
@@ -166,24 +185,302 @@ public final class QuietInstrumentation extends Instrumentation {
 
     private void runCancel(JSONObject out) throws Exception {
         Context target = getTargetContext();
-        openQaActivity();
         recordKeyguard(out);
-        Uri source = prepareQaSource(target, out);
+        List<String> sources = new ArrayList<String>();
+        List<Uri> uris = new ArrayList<Uri>();
+        try {
+            for (String name : RECEIPT_FIXTURES) {
+                Uri uri = Uri.parse("content://app.quietagent.test.fixtures/" + name);
+                fixturePermission(target, uri, true);
+                uris.add(uri); sources.add(uri.toString());
+            }
+            String scope = android.text.TextUtils.join("\n", sources);
+            TaskSpec spec = TaskSpec.ocr(scope, "票据照片 · 本地摘要 · 待核对");
+            AuthorizationManager auth = new AuthorizationManager(new AtomicFileStateStore(new File(target.getFilesDir(), "security/authorization.state")));
+            Authorization authorization = auth.authorize(spec);
+            ReceiptJobStore jobs = new ReceiptJobStore(target);
+            String id = jobs.createPending(spec, authorization.nonce(), sources);
+            Store store = new Store(target);
+            Intent run = new Intent(target, TaskService.class).setAction(TaskService.ACTION_RUN).putExtra("jobId", id);
+            if (Build.VERSION.SDK_INT >= 26) target.startForegroundService(run); else target.startService(run);
+            waitForRunning(store, "", LIMIT_MS);
+            target.startService(new Intent(target, TaskService.class).setAction(TaskService.ACTION_CANCEL));
+            JSONObject terminal = waitForTerminal(store, id, LIMIT_MS);
+            if (!"CANCELLED".equals(terminal.optString("state"))) throw new AssertionError("expected CANCELLED");
+            if (new File(jobs.jobDir(id), ".complete").exists()) throw new AssertionError("cancelled task published .complete");
+            out.put("jobId", id).put("statusState", "CANCELLED").put("completeMarker", false);
+        } finally {
+            for (Uri uri : uris) try { fixturePermission(target, uri, false); } catch (Exception ignored) { }
+        }
+    }
+
+    private void runPermissionDenied(JSONObject out) throws Exception {
+        Context target = getTargetContext();
+        Uri uri = Uri.parse("content://app.quietagent.test.fixtures/receipt-01.png");
+        fixturePermission(target, uri, true);
+        List<String> sources = java.util.Collections.singletonList(uri.toString());
+        TaskSpec spec = TaskSpec.ocr(uri.toString(), "票据照片 · 本地摘要 · 待核对");
+        AuthorizationManager auth = new AuthorizationManager(new AtomicFileStateStore(new File(target.getFilesDir(), "security/authorization.state")));
+        Authorization authorization = auth.authorize(spec);
+        ReceiptJobStore jobs = new ReceiptJobStore(target);
+        String id = jobs.createPending(spec, authorization.nonce(), sources);
+        fixturePermission(target, uri, false);
         Store store = new Store(target);
-        String before = optStatus(store.readStatus(), "id");
-        startRun(target, source);
-        String id = waitForRunning(store, before, LIMIT_MS);
-        out.put("jobId", id);
-        target.startService(new Intent(target, TaskService.class).setAction(TaskService.ACTION_CANCEL));
+        Intent run = new Intent(target, TaskService.class).setAction(TaskService.ACTION_RUN).putExtra("jobId", id);
+        if (Build.VERSION.SDK_INT >= 26) target.startForegroundService(run); else target.startService(run);
         JSONObject terminal = waitForTerminal(store, id, LIMIT_MS);
-        String state = terminal.optString("state");
-        if ("SUCCEEDED".equals(state)) throw new AssertionError("cancel raced with completion; cancelpass is invalid");
-        if (!"CANCELLED".equals(state)) throw new AssertionError("expected CANCELLED, got " + state);
-        File marker = new File(store.getJobFile(id, "archive.zip").getParentFile(), ".complete");
-        if (marker.exists()) throw new AssertionError("cancelled task published .complete");
-        out.put("statusState", state);
-        out.put("completeMarker", false);
-        out.put("cancelNote", "取消任务不得发布可导出的完成标记");
+        if (!"FAILED".equals(terminal.optString("state"))) throw new AssertionError("revoked permission must fail");
+        if (new File(jobs.jobDir(id), ".complete").exists()) throw new AssertionError("permission failure published .complete");
+        out.put("jobId", id).put("statusState", "FAILED").put("completeMarker", false)
+                .put("permissionRevoked", true);
+    }
+
+    private void runInterruptStart(JSONObject out) throws Exception {
+        Context target = getTargetContext();
+        List<String> sources = new ArrayList<String>();
+        for (String name : RECEIPT_FIXTURES) {
+            Uri uri = Uri.parse("content://app.quietagent.test.fixtures/" + name);
+            fixturePermission(target, uri, true);
+            sources.add(uri.toString());
+        }
+        String scope = android.text.TextUtils.join("\n", sources);
+        TaskSpec spec = TaskSpec.ocr(scope, "票据照片 · 本地摘要 · 待核对");
+        AuthorizationManager auth = new AuthorizationManager(new AtomicFileStateStore(new File(target.getFilesDir(), "security/authorization.state")));
+        Authorization authorization = auth.authorize(spec);
+        ReceiptJobStore jobs = new ReceiptJobStore(target);
+        String id = jobs.createPending(spec, authorization.nonce(), sources);
+        Store store = new Store(target);
+        Intent run = new Intent(target, TaskService.class).setAction(TaskService.ACTION_RUN).putExtra("jobId", id);
+        if (Build.VERSION.SDK_INT >= 26) target.startForegroundService(run); else target.startService(run);
+        waitForRunning(store, "", LIMIT_MS);
+        out.put("jobId", id).put("statusState", "RUNNING").put("readyForForceStop", true);
+    }
+
+    private void runRecover(JSONObject out) throws Exception {
+        Context target = getTargetContext();
+        Store store = new Store(target);
+        JSONObject status = new JSONObject(store.readStatus());
+        String id = status.optString("id", "");
+        if (!"INTERRUPTED".equals(status.optString("state")) || !id.startsWith("receipt-")) {
+            throw new AssertionError("interrupted status not recovered");
+        }
+        ReceiptJobStore jobs = new ReceiptJobStore(target);
+        AuthorizationManager auth = new AuthorizationManager(new AtomicFileStateStore(new File(target.getFilesDir(), "security/authorization.state")));
+        jobs.recoverInterrupted(id, auth);
+        File dir = jobs.jobDir(id);
+        if (new File(dir, ".receipt-temp").exists() || new File(dir, ".complete").exists()
+                || new File(dir, "archive.zip").exists() || !new File(dir, "credential").isFile()) {
+            throw new AssertionError("interrupted private data cleanup failed");
+        }
+        for (String name : RECEIPT_FIXTURES) {
+            fixturePermission(target, Uri.parse("content://app.quietagent.test.fixtures/" + name), false);
+        }
+        out.put("jobId", id).put("statusState", "INTERRUPTED").put("tempCleaned", true)
+                .put("completeMarker", false).put("credentialRetained", true);
+    }
+
+    /** Runs the real OCR task against 12 read-only images bundled in this test APK. */
+    private void runReceipt(JSONObject out) throws Exception {
+        Context target = getTargetContext();
+        recordKeyguard(out);
+        long started = SystemClock.elapsedRealtime();
+        List<String> sources = new ArrayList<String>();
+        List<Uri> uris = new ArrayList<Uri>();
+        externalLength = 0; externalUid = 0; externalFocus = false; externalIme = false;
+        android.content.BroadcastReceiver receiver = new android.content.BroadcastReceiver() {
+            public void onReceive(Context c, Intent i) {
+                externalLength = i.getIntExtra("length", 0);
+                externalUid = i.getIntExtra("uid", 0);
+                externalFocus = i.getBooleanExtra("focus", false);
+                externalIme = i.getBooleanExtra("ime", false);
+            }
+        };
+        target.registerReceiver(receiver, new android.content.IntentFilter("app.quietagent.TEST_PROBE"));
+        try {
+            for (String name : RECEIPT_FIXTURES) {
+                Uri uri = Uri.parse("content://app.quietagent.test.fixtures/" + name);
+                // The test provider owns the bytes; the target app receives only
+                // one read grant per selected image, matching the picker contract.
+                fixturePermission(target, uri, true);
+                sources.add(uri.toString());
+                uris.add(uri);
+            }
+            if (arguments != null && "true".equals(arguments.getString("dumpOcr"))) {
+                dumpReceiptOcr(target, sources, out);
+            }
+            StringBuilder scope = new StringBuilder();
+            for (String source : sources) { if (scope.length() > 0) scope.append('\n'); scope.append(source); }
+            TaskSpec spec = TaskSpec.ocr(scope.toString(), "票据照片 · 本地摘要 · 待核对");
+            AuthorizationManager authorizer = new AuthorizationManager(new AtomicFileStateStore(
+                    new File(target.getFilesDir(), "security/authorization.state")));
+            Authorization authorization = authorizer.authorize(spec);
+            ReceiptJobStore jobs = new ReceiptJobStore(target);
+            String jobId = jobs.createPending(spec, authorization.nonce(), sources);
+            out.put("jobId", jobId).put("fixtureCount", sources.size());
+            Store store = new Store(target);
+            Intent run = new Intent(target, TaskService.class).setAction(TaskService.ACTION_RUN).putExtra("jobId", jobId);
+            if (Build.VERSION.SDK_INT >= 26) target.startForegroundService(run); else target.startService(run);
+            target.startActivity(new Intent().setClassName("app.quietagent.test", "app.quietagent.test.ProbeActivity")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            long foregroundDeadline = SystemClock.elapsedRealtime() + 5000L;
+            while (!(externalFocus && externalIme) && SystemClock.elapsedRealtime() < foregroundDeadline) SystemClock.sleep(25L);
+            if (!(externalFocus && externalIme)) throw new AssertionError("independent foreground not ready");
+            int focusSamples = 0, focusLost = 0, inputChanges = 0, previousLength = externalLength;
+            long runDeadline = SystemClock.elapsedRealtime() + RECEIPT_LIMIT_MS;
+            while ("RUNNING".equals(optStatus(store.readStatus(), "state")) && SystemClock.elapsedRealtime() < runDeadline) {
+                focusSamples++;
+                if (!externalFocus || !externalIme) focusLost++;
+                if (externalLength > previousLength) inputChanges++;
+                previousLength = externalLength;
+                android.view.KeyEvent[] events = android.view.KeyCharacterMap.load(
+                        android.view.KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents("x ".toCharArray());
+                for (android.view.KeyEvent event : events) getUiAutomation().injectInputEvent(event, true);
+                SystemClock.sleep(75L);
+            }
+            JSONObject terminal = waitForTerminal(store, jobId, RECEIPT_LIMIT_MS);
+            if (!"SUCCEEDED".equals(terminal.optString("state"))) {
+                throw new AssertionError("receipt ended in " + terminal.optString("state") + ": " + terminal.optString("message"));
+            }
+            verifyReceiptOutput(jobs, jobId, terminal, out);
+            out.put("foregroundUid", externalUid).put("agentUid", android.os.Process.myUid())
+                    .put("focusSamples", focusSamples).put("focusOrImeLost", focusLost)
+                    .put("inputChangeSamples", inputChanges).put("probeLength", externalLength);
+            if (inputChanges < 1 || focusLost != 0 || externalUid == android.os.Process.myUid()) {
+                throw new AssertionError("independent foreground contract failed");
+            }
+            out.put("durationMs", SystemClock.elapsedRealtime() - started);
+            out.put("statusState", terminal.optString("state"));
+        } finally {
+            target.sendBroadcast(new Intent("app.quietagent.test.FINISH").setPackage("app.quietagent.test"));
+            try { target.unregisterReceiver(receiver); } catch (Exception ignored) { }
+            for (Uri uri : uris) {
+                try { fixturePermission(target, uri, false); }
+                catch (Exception ignored) { }
+            }
+        }
+    }
+
+    private void dumpReceiptOcr(Context target, List<String> sources, JSONObject result) throws Exception {
+        app.quietagent.ReceiptOcr ocr = app.quietagent.ReceiptOcr.mlKitChinese();
+        StringBuilder text = new StringBuilder();
+        try {
+            for (int i = 0; i < Math.min(2, sources.size()); i++) {
+                Uri uri = Uri.parse(sources.get(i));
+                InputStream input = target.getContentResolver().openInputStream(uri);
+                Bitmap bitmap;
+                try { bitmap = BitmapFactory.decodeStream(input); } finally { if (input != null) input.close(); }
+                app.quietagent.ReceiptOcr.Result value = ocr.recognize(bitmap, RECEIPT_FIXTURES[i], null);
+                text.append(RECEIPT_FIXTURES[i]).append('=');
+                for (app.quietagent.receipt.ReceiptParser.OcrLine line : value.lines) {
+                    text.append('[').append(line.text).append(']');
+                }
+                text.append(';');
+                if (bitmap != null) bitmap.recycle();
+            }
+        } finally { ocr.close(); }
+        result.put("ocrLines", text.toString());
+    }
+
+    private void verifyReceiptOutput(ReceiptJobStore jobs, String jobId, JSONObject status, JSONObject out) throws Exception {
+        File dir = jobs.jobDir(jobId);
+        File marker = new File(dir, ".complete");
+        File archive = jobs.resultFile(jobId, "archive.zip");
+        File manifestFile = jobs.resultFile(jobId, "manifest.json");
+        File csvFile = jobs.resultFile(jobId, "receipts.csv");
+        File summaryFile = jobs.resultFile(jobId, "summary.html");
+        File auditFile = jobs.resultFile(jobId, "audit-snapshot");
+        if (!marker.isFile()) throw new AssertionError("receipt .complete marker missing");
+        JSONObject manifest = new JSONObject(readUtf8(manifestFile));
+        if (!"quiet-agent-receipt-manifest-v1".equals(manifest.optString("schema"))) throw new AssertionError("receipt manifest schema mismatch");
+        if (manifest.optInt("recognizedTotalCents", -1) != 38080) throw new AssertionError("receipt total is not 38080 cents: " + manifest.optInt("recognizedTotalCents", -1) + " rows=" + manifest.optJSONArray("rows"));
+        org.json.JSONArray rows = manifest.optJSONArray("rows");
+        if (rows == null || rows.length() != 12) throw new AssertionError("receipt manifest must contain 12 rows");
+        Map<String, String> ids = new LinkedHashMap<String, String>();
+        int included = 0, duplicates = 0, review = 0, clearAmounts = 0;
+        long clearTotal = 0;
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.getJSONObject(i);
+            String name = row.optString("sourceName", "");
+            String sourceId = row.optString("sourceId", "");
+            if (name.isEmpty() || sourceId.length() != 64) throw new AssertionError("manifest row identity is invalid");
+            ids.put(name, sourceId);
+            if (row.optBoolean("included", false)) included++;
+            if (!row.isNull("duplicateOf")) duplicates++;
+            if (!row.isNull("reviewReason") && !row.optString("reviewReason", "").isEmpty()) review++;
+            if (row.optBoolean("included", false) && !row.isNull("amountCents")) {
+                clearAmounts++; clearTotal += row.optLong("amountCents", -1L);
+            }
+        }
+        if (included != 10 || duplicates != 2) throw new AssertionError("expected 10 included and 2 duplicate rows");
+        if (review != 2) throw new AssertionError("expected exactly 2 review rows");
+        if (clearAmounts != 8 || clearTotal != 38080L) throw new AssertionError("expected 8 recognized rows totaling 38080 cents, got rows=" + clearAmounts + " total=" + clearTotal);
+        if (!ids.containsKey("receipt-01.png") || !ids.containsKey("receipt-03.png")) throw new AssertionError("duplicate targets missing");
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.getJSONObject(i);
+            String name = row.optString("sourceName", "");
+            if ("duplicate-01.png".equals(name) && !ids.get("receipt-01.png").equals(row.optString("duplicateOf", ""))) throw new AssertionError("duplicate-01 mapping mismatch");
+            if ("duplicate-02.png".equals(name) && !ids.get("receipt-03.png").equals(row.optString("duplicateOf", ""))) throw new AssertionError("duplicate-02 mapping mismatch");
+        }
+        int csvLines = countLines(readUtf8(csvFile));
+        if (csvLines != 13) throw new AssertionError("receipts.csv must contain header plus 12 rows");
+        if (!readUtf8(summaryFile).contains("票据整理结果")) throw new AssertionError("receipt summary missing");
+        JSONObject audit = new JSONObject(readUtf8(auditFile));
+        if (!"quiet-receipt-audit-snapshot-v1".equals(audit.optString("schema")) || audit.optJSONArray("files") == null || audit.optJSONArray("files").length() != 12) throw new AssertionError("audit snapshot must cover 12 rows");
+
+        Set<String> zipNames = new java.util.LinkedHashSet<String>();
+        Set<String> imageHashes = new java.util.HashSet<String>();
+        int imageCount = 0;
+        try (ZipInputStream zip = new ZipInputStream(new BufferedInputStream(new FileInputStream(archive), 64 * 1024))) {
+            ZipEntry entry; byte[] buffer = new byte[64 * 1024];
+            while ((entry = zip.getNextEntry()) != null) {
+                if (!zipNames.add(entry.getName())) throw new AssertionError("duplicate ZIP entry: " + entry.getName());
+                MessageDigest digest = MessageDigest.getInstance("SHA-256"); int n;
+                while ((n = zip.read(buffer)) != -1) digest.update(buffer, 0, n);
+                if (entry.getName().startsWith("receipts/") && entry.getName().endsWith(".png")) { imageCount++; imageHashes.add(hex(digest.digest())); }
+            }
+        }
+        if (imageCount != 10 || imageHashes.size() != 10) throw new AssertionError("ZIP must contain 10 unique image payloads");
+        for (String required : new String[]{"manifest.json", "receipts.csv", "summary.html", "audit-snapshot"}) if (!zipNames.contains(required)) throw new AssertionError("ZIP missing " + required);
+        for (String name : zipNames) if (name.toLowerCase(Locale.ROOT).contains("expected.json")) throw new AssertionError("oracle leaked into ZIP");
+        out.put("selected", status.optInt("selected", -1));
+        out.put("unique", status.optInt("unique", -1));
+        out.put("duplicates", status.optInt("duplicates", -1));
+        out.put("recognizedTotalCents", manifest.optInt("recognizedTotalCents", -1));
+        out.put("completeMarker", true);
+        out.put("zipImagePayloads", imageCount);
+        out.put("reviewRows", review);
+        Uri shared = app.quietagent.ShareProvider.uriFor(getTargetContext(), jobId, "archive.zip");
+        getTargetContext().grantUriPermission(getContext().getPackageName(), shared, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        long sharedBytes = 0;
+        boolean writeDenied = false;
+        try {
+            try (java.io.InputStream input = getContext().getContentResolver().openInputStream(shared)) {
+                byte[] buffer = new byte[64 * 1024]; int n;
+                while ((n = input.read(buffer)) != -1) sharedBytes += n;
+            }
+            try (java.io.OutputStream ignored = getContext().getContentResolver().openOutputStream(shared, "w")) {
+                // A writable descriptor would violate the cross-app export contract.
+            } catch (Exception expected) { writeDenied = true; }
+        } finally {
+            getTargetContext().revokeUriPermission(getContext().getPackageName(), shared,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        }
+        if (sharedBytes != archive.length() || !writeDenied) throw new AssertionError("cross-app export was not read-only");
+        out.put("crossAppBytes", sharedBytes).put("crossAppWriteDenied", true);
+    }
+
+    private static String readUtf8(File file) throws Exception {
+        try (FileInputStream input = new FileInputStream(file)) {
+            byte[] data = new byte[(int) file.length()]; int offset = 0, n;
+            while (offset < data.length && (n = input.read(data, offset, data.length - offset)) != -1) offset += n;
+            return new String(data, 0, offset, java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
+
+    private static int countLines(String value) {
+        if (value == null || value.length() == 0) return 0;
+        int lines = 0; for (int i = 0; i < value.length(); i++) if (value.charAt(i) == '\n') lines++;
+        return value.endsWith("\n") ? lines : lines + 1;
     }
 
     private volatile int externalLength,externalUid;
@@ -302,6 +599,13 @@ public final class QuietInstrumentation extends Instrumentation {
         out.put("deviceSecure", keyguard != null && keyguard.isDeviceSecure());
         out.put("keyguardLocked", keyguard != null && keyguard.isKeyguardLocked());
         out.put("keyguardNote", "仅记录设备安全锁状态；测试不请求或绕过解锁凭据");
+    }
+
+    private void fixturePermission(Context target, Uri uri, boolean grant) {
+        String action = grant ? "app.quietagent.test.GRANT_FIXTURE" : "app.quietagent.test.REVOKE_FIXTURE";
+        target.sendBroadcast(new Intent(action).setClassName("app.quietagent.test",
+                "app.quietagent.test.GrantReceiver").putExtra("uri", uri.toString()));
+        SystemClock.sleep(75L);
     }
 
     private void focusProbe(Activity activity, EditText probe) {
