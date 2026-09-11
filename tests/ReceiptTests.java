@@ -13,6 +13,7 @@ public final class ReceiptTests {
         testAmountAssociationAndIntegerCents();
         testConflictsAndMissingFields();
         testBlocksAndBoundsEvidence();
+        testGeometryAssociatesShuffledAmountLine();
         testNoGuessingAndDateValidation();
         testBilingualReceiptLabels();
         testManifestAndDuplicateMapping();
@@ -38,6 +39,10 @@ public final class ReceiptTests {
         check(Long.valueOf(1200L).equals(whole.amountCents), "whole yuan to cents");
         ReceiptParser.ParsedReceipt commas = parse("商户：小店", "日期：2024/01/02", "合计: 12,345.67元");
         check(Long.valueOf(1234567L).equals(commas.amountCents), "comma amount");
+        ReceiptParser.ParsedReceipt due = parse("商户：小店", "日期：2024/01/02", "应付金额", "¥", "1O.50 元");
+        check(Long.valueOf(1050L).equals(due.amountCents), "split label/currency and OCR zero");
+        ReceiptParser.ParsedReceipt traditional = parse("商户：小店", "日期：2024/01/02", "應付金額：Ｙ8.80");
+        check(Long.valueOf(880L).equals(traditional.amountCents), "traditional total label and OCR currency");
         ReceiptParser.ParsedReceipt badScale = parse("商户：小店", "日期：2024/01/02", "合计: 1.234");
         check(badScale.amountCents == null && badScale.reviewReason.contains("金额"), "no rounding of 3 decimals");
         ReceiptParser.ParsedReceipt unrelated = parse("商户：小店", "日期：2024/01/02", "商品 99.00", "编号 123456");
@@ -65,6 +70,21 @@ public final class ReceiptTests {
         check(r.evidence.get(0).lineIndex == 0, "block line index");
     }
 
+    private static void testGeometryAssociatesShuffledAmountLine() {
+        ReceiptParser.Bounds header = new ReceiptParser.Bounds(0, 0, 300, 30);
+        ReceiptParser.Bounds item = new ReceiptParser.Bounds(0, 120, 300, 150);
+        ReceiptParser.Bounds totalLabel = new ReceiptParser.Bounds(40, 220, 180, 252);
+        ReceiptParser.Bounds totalValue = new ReceiptParser.Bounds(620, 222, 820, 254);
+        ReceiptParser.ParsedReceipt r = ReceiptParser.parseLines(Arrays.asList(
+                new ReceiptParser.OcrLine("日期：2024-01-02", header),
+                new ReceiptParser.OcrLine("合计", totalLabel),
+                new ReceiptParser.OcrLine("商品 99.00", item),
+                new ReceiptParser.OcrLine("商户：小店", header),
+                new ReceiptParser.OcrLine("18.80 元", totalValue)));
+        check(Long.valueOf(1880L).equals(r.amountCents), "same-row shuffled amount line");
+        check(r.evidence.stream().anyMatch(e -> "amount".equals(e.field) && e.lineIndex == 4), "amount geometry evidence");
+    }
+
     private static void testNoGuessingAndDateValidation() {
         ReceiptParser.ParsedReceipt noLabel = parse("名称：小店", "2024-01-02", "应收 99.00");
         check(noLabel.amountCents == null, "amount requires total label");
@@ -72,6 +92,10 @@ public final class ReceiptTests {
         check(invalidMonth.dateIso == null, "invalid month rejected");
         ReceiptParser.ParsedReceipt duplicateSame = parse("商户：小店", "日期：2024-01-02", "合计 3.00", "总金额 3.00");
         check(Long.valueOf(300L).equals(duplicateSame.amountCents) && duplicateSame.reviewReason == null, "same total values do not conflict");
+        ReceiptParser.ParsedReceipt subtotal = parse("商户：小店", "日期：2024-01-02", "小计 3.00", "合计 4.00");
+        check(Long.valueOf(400L).equals(subtotal.amountCents), "final total wins over subtotal");
+        ReceiptParser.ParsedReceipt subtotalOnly = parse("商户：小店", "日期：2024-01-02", "小计 3.00");
+        check(subtotalOnly.amountCents == null, "subtotal alone is not the final payable amount");
         check(ReceiptParser.parseLines(Collections.<ReceiptParser.OcrLine>emptyList()).requiresReview(), "empty OCR needs review");
     }
 

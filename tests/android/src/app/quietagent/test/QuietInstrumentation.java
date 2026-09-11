@@ -79,7 +79,7 @@ public final class QuietInstrumentation extends Instrumentation {
         JSONObject result = new JSONObject();
         int code = 0;
         try {
-            if (!"smoke".equals(selected) && !"cancel".equals(selected) && !"external".equals(selected) && !"export".equals(selected) && !"ui".equals(selected) && !"receipt".equals(selected) && !"permission".equals(selected) && !"interrupt_start".equals(selected) && !"recover".equals(selected)) {
+            if (!"smoke".equals(selected) && !"cancel".equals(selected) && !"external".equals(selected) && !"export".equals(selected) && !"ui".equals(selected) && !"receipt".equals(selected) && !"permission".equals(selected) && !"interrupt_start".equals(selected) && !"recover".equals(selected) && !"inspect_status".equals(selected)) {
                 throw new IllegalArgumentException("unknown scenario");
             }
             if ("smoke".equals(selected)) runSmoke(result);
@@ -90,6 +90,7 @@ public final class QuietInstrumentation extends Instrumentation {
             else if("permission".equals(selected)) runPermissionDenied(result);
             else if("interrupt_start".equals(selected)) runInterruptStart(result);
             else if("recover".equals(selected)) runRecover(result);
+            else if("inspect_status".equals(selected)) runInspectStatus(result);
             else runCancel(result);
             result.put("ok", true);
         } catch (Throwable error) {
@@ -108,6 +109,29 @@ public final class QuietInstrumentation extends Instrumentation {
         output.putString("scenario", selected);
         Log.i(TAG, result.toString());
         finish(code, output);
+    }
+
+    /** Returns aggregate task status only; never emits OCR text or source identifiers. */
+    private void runInspectStatus(JSONObject out) throws Exception {
+        JSONObject status = new JSONObject(new Store(getTargetContext()).readStatus());
+        for (String key : new String[]{"id", "state", "taskType", "selected", "unique", "duplicates", "recognizedTotalCents"}) {
+            if (status.has(key)) out.put(key, status.get(key));
+        }
+        String id = status.optString("id", "");
+        if (id.startsWith("receipt-") && "SUCCEEDED".equals(status.optString("state"))) {
+            File manifestFile = new Store(getTargetContext()).getJobFile(id, "manifest.json");
+            JSONObject manifest = new JSONObject(readUtf8(manifestFile));
+            org.json.JSONArray sourceRows = manifest.optJSONArray("rows");
+            org.json.JSONArray aggregateRows = new org.json.JSONArray();
+            if (sourceRows != null) for (int i = 0; i < sourceRows.length(); i++) {
+                JSONObject source = sourceRows.getJSONObject(i);
+                JSONObject aggregate = new JSONObject();
+                aggregate.put("amountCents", source.opt("amountCents"));
+                aggregate.put("reviewReason", source.opt("reviewReason"));
+                aggregateRows.put(aggregate);
+            }
+            out.put("rows", aggregateRows);
+        }
     }
 
     private void runSmoke(JSONObject out) throws Exception {
