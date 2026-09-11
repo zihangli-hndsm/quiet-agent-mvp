@@ -1,4 +1,7 @@
 /build/
+/app/build/
+/.gradle/
+/local.properties
 /.tmp-*/
 /artifacts/
 /evidence/raw/

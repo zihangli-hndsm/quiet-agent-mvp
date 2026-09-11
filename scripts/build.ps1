@@ -1,37 +1,71 @@
-param([string]$Jdk=$env:QUIET_JDK,[string]$BuildTools=$env:QUIET_BUILD_TOOLS,[string]$AndroidJar=$env:QUIET_ANDROID_JAR)
-$ErrorActionPreference='Stop'
-$taskRepo=Split-Path -Parent $PSScriptRoot
-$taskWorkspace=Split-Path -Parent (Split-Path -Parent $taskRepo)
-if(!$Jdk){$Jdk=(Get-ChildItem "$taskWorkspace\work\tools\jdk" -Directory | Select-Object -First 1).FullName}
-if(!$BuildTools){$BuildTools="$taskWorkspace\work\tools\build-tools\android-11"}
-if(!$AndroidJar){$AndroidJar="$taskWorkspace\work\tools\sdk-platform\android-12\android.jar"}
-foreach($taskPath in @("$Jdk\bin\javac.exe","$BuildTools\aapt.exe",$AndroidJar)){if(!(Test-Path -LiteralPath $taskPath)){throw "Missing build dependency: $taskPath"}}
-$taskOut="$taskRepo\build"
-New-Item -ItemType Directory -Force "$taskOut\classes","$taskOut\dex","$taskOut\core-tests" | Out-Null
-# Empty only compiler output within this repository's build directory.
-$taskClasses=(Resolve-Path "$taskOut\classes").Path
-if(!$taskClasses.StartsWith((Resolve-Path $taskRepo).Path+[IO.Path]::DirectorySeparatorChar)){throw 'Invalid build output path'}
-Get-ChildItem -LiteralPath $taskClasses -Force | Remove-Item -Recurse -Force
-$taskSources=Get-ChildItem "$taskRepo\app\src" -Filter '*.java' -Recurse | ForEach-Object FullName
-& "$Jdk\bin\javac.exe" '-J-Duser.language=en' --release 8 -encoding UTF-8 -classpath $AndroidJar -d "$taskOut\classes" @taskSources
-if($LASTEXITCODE){throw 'Java compilation failed'}
-& "$Jdk\bin\jar.exe" cf "$taskOut\classes.jar" -C "$taskOut\classes" .
-& "$Jdk\bin\java.exe" -cp "$BuildTools\lib\d8.jar" com.android.tools.r8.D8 --lib $AndroidJar --min-api 26 --output "$taskOut\dex" "$taskOut\classes.jar"
-if($LASTEXITCODE){throw 'DEX compilation failed'}
-& "$BuildTools\aapt.exe" package -f -M "$taskRepo\app\AndroidManifest.xml" -I $AndroidJar -F "$taskOut\unsigned.apk"
-if($LASTEXITCODE){throw 'APK packaging failed'}
-& "$Jdk\bin\jar.exe" uf "$taskOut\unsigned.apk" -C "$taskOut\dex" classes.dex
-& "$BuildTools\zipalign.exe" -f 4 "$taskOut\unsigned.apk" "$taskOut\aligned.apk"
-if($LASTEXITCODE){throw 'ZIP alignment failed'}
-if(!(Test-Path "$taskOut\debug.keystore")){
- & "$Jdk\bin\keytool.exe" -genkeypair -keystore "$taskOut\debug.keystore" -storepass android -keypass android -alias quiet -keyalg RSA -keysize 2048 -validity 3650 -dname 'CN=Quiet Agent MVP'
- if($LASTEXITCODE){throw 'Test signing key generation failed'}
+param(
+    [string]$Jdk = $env:QUIET_JDK,
+    [string]$AndroidSdk = $env:ANDROID_HOME,
+    [string]$GradleHome = $env:QUIET_GRADLE
+)
+
+$ErrorActionPreference = 'Stop'
+$repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$workspace = (Resolve-Path (Join-Path $repo '..\..')).Path
+$tools = Join-Path $workspace 'work\tools'
+
+if (-not $Jdk) { $Jdk = Join-Path $tools 'jdk\jdk-17.0.20.1+1' }
+if (-not $AndroidSdk) { $AndroidSdk = Join-Path $tools 'android-sdk' }
+if (-not $GradleHome) { $GradleHome = Join-Path $tools 'gradle-8.9' }
+
+$gradle = Join-Path $GradleHome 'bin\gradle.bat'
+$aapt = Join-Path $AndroidSdk 'build-tools\35.0.0\aapt.exe'
+foreach ($required in @($Jdk, $AndroidSdk, $gradle, $aapt)) {
+    if (-not (Test-Path -LiteralPath $required)) { throw "Missing build dependency: $required" }
 }
-& "$Jdk\bin\java.exe" -jar "$BuildTools\lib\apksigner.jar" sign --ks "$taskOut\debug.keystore" --ks-pass pass:android --key-pass pass:android --out "$taskOut\quiet-agent-mvp.apk" "$taskOut\aligned.apk"
-if($LASTEXITCODE){throw 'APK signing failed'}
-& "$Jdk\bin\java.exe" -jar "$BuildTools\lib\apksigner.jar" verify "$taskOut\quiet-agent-mvp.apk"
-if($LASTEXITCODE){throw 'Signature verification failed'}
-$taskPermissions=& "$BuildTools\aapt.exe" dump permissions "$taskOut\quiet-agent-mvp.apk"
-if($taskPermissions -match 'android.permission.INTERNET'){throw 'Network permission must remain absent'}
-$taskPermissions
-Get-FileHash "$taskOut\quiet-agent-mvp.apk" -Algorithm SHA256 | Format-List
+
+$env:JAVA_HOME = (Resolve-Path $Jdk).Path
+$env:ANDROID_HOME = (Resolve-Path $AndroidSdk).Path
+$env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
+
+# Lint 31.7.3 is not present in the offline tool cache. The APK is still
+# compiled, packaged, signed, and checked below; online CI can omit these -x flags.
+$gradleArgs = @(
+    ':app:clean', ':app:assembleDemo', '--offline', '--no-daemon', '--console=plain',
+    '-x', 'lintVitalAnalyzeDemo', '-x', 'lintVitalReportDemo', '-x', 'lintVitalDemo'
+)
+& $gradle $gradleArgs
+if ($LASTEXITCODE -ne 0) { throw "Gradle demo build failed with exit code $LASTEXITCODE" }
+
+$apk = Join-Path $repo 'app\build\outputs\apk\demo\app-demo.apk'
+if (-not (Test-Path -LiteralPath $apk)) { throw "Demo APK was not produced: $apk" }
+
+$permissions = (& $aapt dump permissions $apk | Out-String)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect APK permissions' }
+if ($permissions -match 'android\.permission\.INTERNET') {
+    throw 'Demo APK must not request android.permission.INTERNET'
+}
+
+$manifest = (& $aapt dump xmltree $apk AndroidManifest.xml | Out-String)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect merged AndroidManifest.xml' }
+if ($manifest -match 'android:debuggable[^\r\n]*0x1') {
+    throw 'Demo APK must be non-debuggable'
+}
+if ($manifest -notmatch 'android:allowBackup[^\r\n]*0x0') {
+    throw 'Demo APK must set android:allowBackup=false'
+}
+
+$out = Join-Path $repo 'build\quiet-agent-demo.apk'
+New-Item -ItemType Directory -Force (Split-Path $out) | Out-Null
+Copy-Item -LiteralPath $apk -Destination $out -Force
+
+# Export the Gradle javac output for the dependency-free probe compiler. The
+# test APK is signed with the same Gradle debug key used by the demo variant.
+$classes = Join-Path $repo 'app\build\intermediates\javac\demo\compileDemoJavaWithJavac\classes'
+if (-not (Test-Path -LiteralPath $classes)) { throw "Gradle classes were not produced: $classes" }
+$classesJar = Join-Path $repo 'build\classes.jar'
+& (Join-Path $env:JAVA_HOME 'bin\jar.exe') cf $classesJar -C $classes .
+if ($LASTEXITCODE -ne 0) { throw 'Unable to export Gradle classes.jar for probe build' }
+$debugKeystore = Join-Path $env:USERPROFILE '.android\debug.keystore'
+if (Test-Path -LiteralPath $debugKeystore) {
+    Copy-Item -LiteralPath $debugKeystore -Destination (Join-Path $repo 'build\debug.keystore') -Force
+}
+
+Write-Output "Demo APK: $out"
+Write-Output "SHA256: $((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)"
+Write-Output 'Manifest checks: no INTERNET, non-debuggable, allowBackup=false'
