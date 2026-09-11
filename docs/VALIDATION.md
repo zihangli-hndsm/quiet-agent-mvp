@@ -1,43 +1,38 @@
-# MVP 验收记录 · 2026-09-11
+# Quiet Agent v0.2 验收记录 · 2026-09-11
 
-设备：Motorola edge S30 / XT2175-2，Android 12 / API 31。所有手机任务走 USB 与本地存储；未安装 VPN、未打开外部网站。APK 仅声明前台服务和唤醒锁权限，没有 INTERNET。测试内容为明确生成的样例，没有读取用户原有文件内容。
+设备：Motorola XT2175-2，Android 12 / API 31。主 APK 通过 USB 全新覆盖安装；手机没有连接境外网站。测试仅使用仓库中的 12 张虚构票据，未读取用户原有照片。
 
-## 已完成
+## 最终结果
 
-| 验收项 | 证据与结果 |
+| 验收项 | 结果 |
 |---|---|
-| 核心规则、去重、内容变化拒绝、取消、数量限制 | `CoreTests OK (30 assertions)` |
-| JVM 实际归档 + 独立 Python 校验 | small：9 选中 / 8 写入 / 1 跳过；stress：100 / 98 / 2，32 MiB；均 PASS |
-| 同应用输入并发 | 最终包：23 次焦点采样，焦点丢失 0、输入不可用 0、键盘隐藏 0；运行中 18 次输入变化 |
-| **独立前台应用并发** | 前台 UID 10055，Agent UID 10047；16 次采样，焦点/键盘丢失 0；运行中 15 次输入变化，48 MiB 样例完成 |
-| 真实结果 | 30 个选中文件、29 个 ZIP 条目、1 个重复跳过；手机逐项回读，电脑另行核对原件 SHA-256、ZIP payload、路径、计数、重复映射，PASS |
-| 取消 | `CANCELLED`，未生成 `.complete`；未宣称取消竞速为成功 |
-| 系统目录授权与真实按钮路径 | 通过系统选择器只读授权新建样例目录，点击预览/开始；2 个文件写入 1 个、跳过 1 个，报告页面实际打开；电脑独立校验 PASS |
-| 导出 | 独立 UID 读取 50,351,635 字节，SHA-256 与任务一致；写入被拒绝 |
-| 通知 | 系统记录 importance=2、sound=null、vibration=false；服务没有调用启动 Activity 或键盘的代码 |
-| 安装与渲染 | 最终 APK 已安装；主页面和真实报告已截图检查，长哈希可换行，表格可横向滚动 |
+| 离线中文 OCR | APK 内置 ML Kit 中文模型；安装后断网识别成功 |
+| 票据结果 | 12 张输入、10 个唯一图片、2 个重复映射、2 项待核对；完整且无冲突的票据合计 380.80 元 |
+| 真实资料包 | ZIP 含 10 张去重图片、CSV、HTML、清单和审计快照；手机端重新读取并核对条目与 SHA-256 |
+| 同机前台使用 | 独立测试应用 UID `10584`，Agent UID `10578`；OCR 期间 8 次焦点/键盘采样，丢失 0 次，7 次采样观察到输入继续变化 |
+| 跨应用只读导出 | 独立 UID 读取 626,047 字节；写入被拒绝 |
+| 取消 | 状态 `CANCELLED`，没有 `.complete` 标记 |
+| 权限撤销 | 状态 `FAILED`，没有 `.complete` 标记 |
+| 进程中断 | 强制终止时为 `RUNNING`；恢复后为 `INTERRUPTED`，临时照片已清理、没有完成标记、审计凭证保留 |
+| 授权规则 | 未确认、拒绝、授权重放和修改任务范围均由 41 项安全断言覆盖 |
+| 构建边界 | 最终 Manifest 无 `INTERNET`；`debuggable=false`；`allowBackup=false` |
 
-最终 APK SHA-256：`A49B8490A9707EF16ACFA0894E36EF3DCD1900037E934322E6E9DC9F6DE99E9C`。
+最终 APK SHA-256：`1212DABE28066BBBED72DD3029B589F44EE1CDE3C29AB74073EFE0458FC13AAA`。
 
-机器可读结果见 [evidence](../evidence/)。最终独立前台任务：`job-1789094059320-04a5c1cd`，ZIP SHA-256：`82b7225ca1d51aecb4bc874c8b086b107332c915ab9ce0b8f8b814055727a90e`。实际页面任务：`job-1789094824908-bdfb24b2`。报告截图见 [report.png](../evidence/report.png)。
+核心测试：`SecurityTests OK (41 assertions)`、`ReceiptTests OK (30 assertions)`；Python 资料包校验测试通过。最终真机证据目录为 `build/device-tests-20260911-121831698/`，主成功任务编号为 `receipt-1789129114556-f27b8d4a`，耗时 3,045 ms。
 
-## 可复现
-
-设置 README 中的 JDK / Android SDK 路径后：
+## 复现
 
 ```powershell
-pwsh scripts/test-integration.ps1
-pwsh scripts/test-device.ps1 -Adb C:\path\to\adb.exe
+.\scripts\build.ps1
+.\scripts\build-tests.ps1
+.\scripts\test-device.ps1 -Adb C:\path\to\adb.exe -SkipBuild
 ```
 
-设备脚本会安装主 APK 和测试 APK，顺序执行 smoke、cancel、external、export。每一步读取结构化结果并在失败时中止；结果保存在 `build/device-tests-*/`。测试需要已授权 USB 调试。`external` 使用单独测试应用，不安装第三方输入服务或改变默认键盘。
+设备脚本依次运行真实 OCR、取消、权限撤销、进程中断与恢复；每步读取结构化结果，失败立即停止。测试页属于独立测试 APK，可显示在锁屏上方以完成无人值守验收；主 APK 没有该能力，测试不请求、不猜测也不绕过解锁凭据。
 
-`ui` 是本机额外验收：仅当系统选择器已授权指定的 `Documents/QuietAgentMVP-SAF-20260911` 样例目录时才运行；默认测试脚本不自动请求用户私人目录权限。`collect_device.py` 只采集本应用样例目录或上述固定 SAF 样例目录和指定 job。
+## 证据边界
 
-## 限制与失败记录
+这组结果证明当前 Android 12 设备和这批虚构样例上的离线闭环。它不代表任意厂商后台策略、任意票据版式或长期高负载下都不会发生资源竞争。CPU、内存和磁盘仍由用户与 Agent 共享；OCR 无法可靠提取的内容会明确进入“待核对”，不会进入自动合计。
 
-最初两次输入检测失败：第一版未等待 IME 就绪，第二版在异步输入回显前采样。未当作通过；修复后使用跨采样长度变化，最终结果如上。此前一次 smoke 日志曾重复统计同一输入，最终脚本已移除重复计数。旧记录不用于最终统计。
-
-测试时系统报告 `deviceSecure=true`、`keyguardLocked=false`。测试 APK 可以将自己的测试页显示在锁屏上方，但未调用解锁凭据、未修改安全锁；主 APK 不使用此能力。没有让用户参与这一轮测试。
-
-上述是自动注入输入的短时真机证据，不是“任意 App、任意负载、长期零卡顿”的证明；未测真人长期使用、强杀恢复、磁盘耗尽、权限撤销、全厂商保活。CPU/磁盘仍共享。MVP 使用有限关键词规划、只读文件能力，不含 LLM，也不提供通用 GUI 操作。调试包与商店发布版的边界见 [架构](ARCHITECTURE.md)。
+审计记录可核对授权与执行阶段，但不宣称第三方认证或不可篡改。导出的副本无法通过应用内清除追回。

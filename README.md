@@ -1,24 +1,42 @@
-# 静默整理 · Quiet Agent MVP
+# Quiet Agent v0.2
 
-在同一台 Android 手机上，前台照常输入/使用应用，后台把选定目录去重、分类归档并核验结果。**全离线、原文件只读**；受限自然语言规则规划，不是通用聊天模型或任意 App 操作器。
+同一台 Android 手机上，用户继续聊天、输入和滚动，Quiet Agent 在后台离线整理用户明确选择的中文票据照片。它不启动其他界面、不模拟触摸、不占用焦点或键盘；每次任务都要单独授权，失败或取消不会发布“完成”结果。
 
 ```mermaid
 flowchart LR
-  U[选目录＋描述任务] --> P[本地规则计划]
-  P --> S[静音前台服务]
-  D[本机 SAF 只读目录] --> S
-  S --> H[内容哈希＋去重分类]
-  H --> V[ZIP 回读核验]
-  V --> R[归档＋清单＋报告]
-  F[用户前台应用] --- I[独立使用焦点与键盘]
+  U[系统选择器<br/>仅所选照片] --> C[敏感信息告知<br/>逐次明确授权]
+  C --> J[私有任务规格<br/>Service 只接 jobId]
+  J --> O[后台串行 OCR<br/>APK 内置中文模型]
+  O --> H[SHA-256 去重<br/>规则提取金额/日期/商户]
+  H --> Z[ZIP 回读校验<br/>CSV + HTML + 清单]
+  Z --> A[审计凭证<br/>输入/输出哈希与事件]
+  F[用户前台应用] --- K[屏幕·焦点·键盘始终归用户]
 ```
 
-**部署：**在电脑下载 [Release APK](https://github.com/zihangli-hndsm/quiet-agent-mvp/releases/tag/v0.1.0)，经 USB 安装到 Android 8+（已测 Android 12），手机无需访问 GitHub。打开“静默整理”→从**内部存储**挑选目录，或载入样例→预览→开始。可以离开页面；返回查看报告或导出 ZIP。授权只需部署/选目录时进行。后台有静音持续通知，可取消。
+演示范围固定为中文发票与收据照片。一次可选 1–30 张 JPEG/PNG，单张不超过 20 MiB、合计不超过 200 MiB。金额只接受与“合计 / 价税合计 / 总金额”明确关联的候选，使用整数分累计；字段缺失或冲突会进入“待核对”。完全重复图片只 OCR 和归档一次，但报告保留重复映射。
 
-**例句：**`把这个目录里的文件去重，按类型归档`；`只整理PDF和图片，按月份归档`；`最近7天的文档，不去重`。类型依据扩展名，月份依据修改时间。有限关键词解析，请核对计划预览；支持范围见 [架构](docs/ARCHITECTURE.md)。
+## 部署
 
-**构建（Windows）：**JDK 17、SDK Platform 31、Build Tools 30.0.3；`pwsh scripts/build.ps1 -Jdk <目录> -BuildTools <目录> -AndroidJar <android.jar>`。可用环境变量 `QUIET_JDK`、`QUIET_BUILD_TOOLS`、`QUIET_ANDROID_JAR` 代替参数。输出 `build/quiet-agent-mvp.apk`；无需 API Key，APK 不含 INTERNET 权限。
+1. 在电脑下载 [v0.2 Release APK](https://github.com/zihangli-hndsm/quiet-agent-mvp/releases/tag/v0.2.0)，通过 USB 安装到 Android 8+；已针对 Android 12 验收。手机无需访问 GitHub。
+2. 打开 Quiet Agent，选择“票据整理”与本机照片。阅读本次范围、目的和风险后点击“授权并开始”。
+3. 立即切到其他应用正常使用。完成后返回查看待核对报告；导出前会再次确认并打开系统分享面板。
 
-**验证：**`pwsh scripts/test-integration.ps1`（Python 可用 `QUIET_PYTHON`）；`pwsh scripts/test-device.ps1 -Adb <adb.exe>`（或 `QUIET_ADB`，仅 USB）。真机独立前台应用输入期间完成 48 MiB 整理，详见 [验收记录](docs/VALIDATION.md)。自动输入不等价于真人长期使用。
+演示 APK 无 `INTERNET` 权限、`debuggable=false`、`allowBackup=false`。中文 ML Kit 模型随 APK 打包，首次安装后即可离线识别。原文件整理入口仍保留，并遵守相同的逐次授权。
 
-**边界：**单文件 64 MiB、一次选中 1000 文件/256 MiB；仅本机存储提供方。取消/中断不自动重跑，成功结果在完整回读后发布。当前版本为可侧载、可调试的 MVP；长任务保活和不同厂商兼容不作全机型保证。
+## 构建与验证
+
+需要 JDK 17、Gradle 8.9、Android SDK 35 / AGP 8.7.3。仓库自带 wrapper；本机脚本默认寻找工作区工具目录，也可设置：
+
+```powershell
+$env:QUIET_JDK = "C:\path\to\jdk-17"
+$env:QUIET_GRADLE = "C:\path\to\gradle-8.9"
+$env:ANDROID_HOME = "C:\path\to\android-sdk"
+.\scripts\build.ps1
+.\scripts\build-tests.ps1
+.\scripts\test-core.ps1
+python -m unittest tests/test_verify_receipt_package.py -v
+```
+
+产物为 `build/quiet-agent-demo.apk`。构建脚本会检查最终 Manifest 无联网权限、演示包不可调试且禁用备份。12 张明确标为虚构的样例覆盖 8 张清晰票据、2 张完全重复、1 张金额模糊和 1 张非票据；预期答案只存在于测试。演示步骤见 [docs/DEMO-V02.md](docs/DEMO-V02.md)，真机结果见 [docs/VALIDATION.md](docs/VALIDATION.md)。
+
+审计凭证用于核对告知、授权、任务绑定、阶段事件和文件哈希，不代表第三方认证或不可篡改。导出的副本不受“清除此任务本地数据”影响。
