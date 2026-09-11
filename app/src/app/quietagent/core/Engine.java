@@ -358,8 +358,8 @@ public final class Engine {
         b.append("<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>本地文件归档结果</title><style>body{font-family:sans-serif;background:#fff;color:#164a3a;margin:1rem;line-height:1.5}h1{color:#0b5d3b} .table-wrap{overflow-x:auto}table{border-collapse:collapse;min-width:680px}th,td{border:1px solid #b7d5c7;padding:.35rem;text-align:left}th{background:#e7f3ed}.hash{overflow-wrap:anywhere;word-break:break-word}</style></head><body><h1>本地文件归档结果</h1>");
         b.append("<p><b>规则</b>: ").append(html(plan.summary())).append("</p>");
         b.append("<p><b>来源快照</b>: ").append(html(sourceDescription)).append("。读取的是一次候选列表和逐项内容快照；不是全局事务，也不锁定用户文件。</p>");
-        b.append("<p><b>统计</b>: 扫描 ").append(scanned).append("，选择 ").append(selected).append("，唯一归档 ").append(items.size()).append("，重复跳过 ").append(duplicates).append("，归档字节 ").append(bytes).append("。</p>");
-        b.append("<p><b>archive.zip SHA-256</b>: ").append(html(archiveHash)).append("</p>");
+        b.append("<p><b>统计</b>: 扫描 ").append(scanned).append("，选择 ").append(selected).append("，写入归档 ").append(items.size()).append("，重复跳过 ").append(duplicates).append("，归档字节 ").append(bytes).append("。</p>");
+        b.append("<p class=\"hash\"><b>archive.zip SHA-256</b>: ").append(html(archiveHash)).append("</p>");
         b.append("<p><b>限制</b>: 最多1000个选中文件；总计256 MiB；单文件64 MiB；源文件不可变；仅支持本地流；不上传、不发送、不删除、不移动。归档完成前会回读 ZIP 并核对每项 CRC/内容 SHA-256。</p>");
         b.append("<div class=\"table-wrap\"><table><tr><th>归档路径</th><th>原路径</th><th>大小</th><th>SHA-256</th></tr>");
         for (Item x : items) b.append("<tr><td>").append(html(x.zipName)).append("</td><td>").append(html(x.entry.path)).append("</td><td>").append(x.actualSize).append("</td><td class=\"hash\">").append(html(x.hash)).append("</td></tr>");
