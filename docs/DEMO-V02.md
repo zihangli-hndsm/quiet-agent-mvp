@@ -1,4 +1,4 @@
-# Quiet Agent v0.2 演示脚本（约 3 分钟）
+# Quiet Agent v0.2.1 演示脚本（约 3 分钟）
 
 ## 演示前
 

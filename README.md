@@ -1,4 +1,4 @@
-# Quiet Agent v0.2
+# Quiet Agent v0.2.1
 
 同一台 Android 手机上，用户继续聊天、输入和滚动，Quiet Agent 在后台离线整理用户明确选择的中文票据照片。它不启动其他界面、不模拟触摸、不占用焦点或键盘；每次任务都要单独授权，失败或取消不会发布“完成”结果。
 
@@ -17,7 +17,7 @@ flowchart LR
 
 ## 部署
 
-1. 在电脑下载 [v0.2 Release APK](https://github.com/zihangli-hndsm/quiet-agent-mvp/releases/tag/v0.2.0)，通过 USB 安装到 Android 8+；已针对 Android 12 验收。手机无需访问 GitHub。
+1. 在电脑下载 [v0.2.1 Release APK](https://github.com/zihangli-hndsm/quiet-agent-mvp/releases/tag/v0.2.1)，通过 USB 安装到 Android 8+；已针对 Android 12 验收。手机无需访问 GitHub。
 2. 打开 Quiet Agent，选择“票据整理”与本机照片。阅读本次范围、目的和风险后点击“授权并开始”。
 3. 立即切到其他应用正常使用。完成后返回查看待核对报告；导出前会再次确认并打开系统分享面板。
 

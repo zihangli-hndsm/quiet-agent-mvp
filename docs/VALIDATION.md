@@ -1,4 +1,4 @@
-# Quiet Agent v0.2 验收记录 · 2026-09-11
+# Quiet Agent v0.2.1 验收记录 · 2026-09-11
 
 设备：Motorola XT2175-2，Android 12 / API 31。主 APK 通过 USB 全新覆盖安装；手机没有连接境外网站。测试仅使用仓库中的 12 张虚构票据，未读取用户原有照片。
 
@@ -16,10 +16,11 @@
 | 进程中断 | 强制终止时为 `RUNNING`；恢复后为 `INTERRUPTED`，临时照片已清理、没有完成标记、审计凭证保留 |
 | 授权规则 | 未确认、拒绝、授权重放和修改任务范围均由 41 项安全断言覆盖 |
 | 构建边界 | 最终 Manifest 无 `INTERNET`；`debuggable=false`；`allowBackup=false` |
+| 真实失败回归 | 开发阶段旧版图片中“合计”和金额被分到不同 OCR 行；v0.2.1 按文字边界关联，同一批 12 张旧图真机回归为 380.80 元 |
 
-最终 APK SHA-256：`1212DABE28066BBBED72DD3029B589F44EE1CDE3C29AB74073EFE0458FC13AAA`。
+最终 APK SHA-256：`5930B3D5A5C3494098B61FD741A81184FFF6C98CD81EF5CDC8F46ABE9B812A67`。
 
-核心测试：`SecurityTests OK (41 assertions)`、`ReceiptTests OK (30 assertions)`；Python 资料包校验测试通过。最终真机证据目录为 `build/device-tests-20260911-121831698/`，主成功任务编号为 `receipt-1789129114556-f27b8d4a`，耗时 3,045 ms。
+核心测试：`SecurityTests OK (41 assertions)`、`ReceiptTests OK (36 assertions)`；Python 资料包校验测试通过。v0.2.1 旧版图片回归任务编号为 `receipt-1789131497930-5dc35b11`，耗时 2,939 ms。
 
 ## 复现
 
