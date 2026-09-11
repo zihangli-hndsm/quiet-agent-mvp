@@ -23,6 +23,16 @@ $env:JAVA_HOME = (Resolve-Path $Jdk).Path
 $env:ANDROID_HOME = (Resolve-Path $AndroidSdk).Path
 $env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
 
+# Demo-only key material is packaged locally but remains outside Git. The app
+# reads it from assets so the presentation APK can call the supplied LLM.
+$keyFile = if ($env:QUIET_LLM_KEY_FILE) { $env:QUIET_LLM_KEY_FILE } else { 'C:\Users\Administrator\Desktop\VOLK\api.txt' }
+if (-not (Test-Path -LiteralPath $keyFile)) { throw "Missing demo LLM key file: $keyFile" }
+$keyLines = @(Get-Content -LiteralPath $keyFile | Where-Object { $_.Trim().Length -gt 0 })
+if ($keyLines.Count -lt 2 -or $keyLines[1].Trim().Length -lt 16) { throw 'Demo LLM key file has no usable first API key' }
+$assetDirectory = Join-Path $repo 'app\src\main\assets'
+New-Item -ItemType Directory -Force $assetDirectory | Out-Null
+Set-Content -LiteralPath (Join-Path $assetDirectory 'demo-llm-key') -Value $keyLines[1].Trim() -NoNewline -Encoding ascii
+
 # Lint 31.7.3 is not present in the offline tool cache. The APK is still
 # compiled, packaged, signed, and checked below; online CI can omit these -x flags.
 $gradleArgs = @(
@@ -37,8 +47,8 @@ if (-not (Test-Path -LiteralPath $apk)) { throw "Demo APK was not produced: $apk
 
 $permissions = (& $aapt dump permissions $apk | Out-String)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect APK permissions' }
-if ($permissions -match 'android\.permission\.INTERNET') {
-    throw 'Demo APK must not request android.permission.INTERNET'
+if ($permissions -notmatch 'android\.permission\.INTERNET') {
+    throw 'Demo APK must request android.permission.INTERNET for the explicitly enabled LLM demo'
 }
 
 $manifest = (& $aapt dump xmltree $apk AndroidManifest.xml | Out-String)
@@ -68,4 +78,4 @@ if (Test-Path -LiteralPath $debugKeystore) {
 
 Write-Output "Demo APK: $out"
 Write-Output "SHA256: $((Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash)"
-Write-Output 'Manifest checks: no INTERNET, non-debuggable, allowBackup=false'
+Write-Output 'Manifest checks: INTERNET for LLM demo, non-debuggable, allowBackup=false'

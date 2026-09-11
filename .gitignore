@@ -2,6 +2,7 @@
 /app/build/
 /.gradle/
 /local.properties
+/app/src/main/assets/demo-llm-key
 /.tmp-*/
 /artifacts/
 /evidence/raw/

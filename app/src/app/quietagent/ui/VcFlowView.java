@@ -9,7 +9,9 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Build;
+import android.text.Editable;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -19,6 +21,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import app.quietagent.security.AtomicFileStateStore;
+import app.quietagent.LlmIntentRouter;
 import app.quietagent.security.Authorization;
 import app.quietagent.security.AuthorizationException;
 import app.quietagent.security.AuthorizationManager;
@@ -59,6 +62,8 @@ public final class VcFlowView extends ScrollView {
     private final TextView permissionLabel;
     private final TextView planLabel;
     private final TextView resultLabel;
+    private final EditText intentInput;
+    private final Button understandButton;
     private final Button chooseButton;
     private final Button authorizeButton;
     private final Button reportButton;
@@ -71,6 +76,10 @@ public final class VcFlowView extends ScrollView {
     private Authorization authorization;
     private TaskSpec authorizedSpec;
     private String jobId = "";
+    private String llmPlan = "";
+    private String llmRisk = "";
+    private boolean llmReady;
+    private boolean applyingRoute;
 
     private enum Mode { TICKET, ORIGINAL }
 
@@ -88,11 +97,40 @@ public final class VcFlowView extends ScrollView {
 
         TextView eyebrow = text("QUIET AGENT  ·  本地任务授权", 12, GREEN, true);
         root.addView(eyebrow, lp(-1, -2, 0, 0, 0, 10));
-        TextView title = text("先选工作方式，再授权开始", 30, INK, true);
+        TextView title = text("先说要做什么，再授权开始", 30, INK, true);
         root.addView(title, lp(-1, -2, 0, 0, 0, 5));
         TextView intro = text("每次授权只对应当前选择。修改选择后，旧授权立即失效。", 15, MUTED, false);
         intro.setLineSpacing(2f, 1f);
         root.addView(intro, lp(-1, -2, 0, 0, 0, 18));
+
+        LinearLayout intentCard = card();
+        root.addView(intentCard, lp(-1, -2, 0, 0, 0, 12));
+        intentCard.addView(text("一句话描述任务", 17, INK, true), lp(-1, -2, 18, 16, 18, 5));
+        TextView intentHint = text("模型只读取这句话，用来选择已有任务并生成本次风险提示。不会读取照片、文件名或文件内容。", 13, MUTED, false);
+        intentHint.setLineSpacing(2f, 1f);
+        intentCard.addView(intentHint, lp(-1, -2, 18, 0, 18, 8));
+        intentInput = new EditText(context);
+        intentInput.setTextSize(16);
+        intentInput.setTextColor(INK);
+        intentInput.setHintTextColor(Color.rgb(155, 167, 159));
+        intentInput.setHint("例如：整理这些餐饮票据，做一个本地待核对汇总");
+        intentInput.setSingleLine(false);
+        intentInput.setMinHeight(dp(76));
+        intentInput.setPadding(dp(12), dp(8), dp(12), dp(8));
+        intentInput.setBackground(roundDrawable(Color.rgb(249, 251, 249), LINE, 10));
+        intentInput.setContentDescription("llm-task-intent");
+        intentInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (llmReady) invalidateLlmDecision();
+            }
+            @Override public void afterTextChanged(Editable value) { }
+        });
+        intentCard.addView(intentInput, lp(-1, -2, 18, 0, 18, 10));
+        understandButton = button("让助手理解任务并提示风险", GREEN, Color.WHITE);
+        understandButton.setContentDescription("llm-understand-task");
+        understandButton.setOnClickListener(v -> understandIntent());
+        intentCard.addView(understandButton, lp(-1, 48, 18, 0, 18, 16));
 
         LinearLayout modeCard = card();
         root.addView(modeCard, lp(-1, -2, 0, 0, 0, 12));
@@ -192,6 +230,7 @@ public final class VcFlowView extends ScrollView {
 
     private void switchMode(Mode next) {
         if (mode == next) return;
+        if (!applyingRoute) invalidateLlmDecision();
         mode = next;
         authorization = null;
         authorizedSpec = null;
@@ -205,14 +244,14 @@ public final class VcFlowView extends ScrollView {
             selectionLabel.setText("请选择要整理的票据照片");
             chooseButton.setText("选择票据照片");
             chooseButton.setContentDescription("select-ticket-photos");
-            permissionLabel.setText("风险提示：照片可能包含姓名、金额、地址等敏感信息。仅在本机处理，不上传原图。");
+            permissionLabel.setText(defaultPermissionNotice());
             authorizeButton.setText("授权并开始票据整理");
         } else {
             modeLabel.setText("原文件整理：只读归档");
             selectionLabel.setText("请选择要读取的目录");
             chooseButton.setText("挑选原文件目录");
             chooseButton.setContentDescription("select-original-folder");
-            permissionLabel.setText("风险提示：只读取你明确授权的目录，不删除、不移动、不上传原文件。");
+            permissionLabel.setText(defaultPermissionNotice());
             authorizeButton.setText("授权并开始原文件整理");
         }
         planLabel.setText("选择已改变，之前的授权已失效。\n允许的操作会显示在这里。");
@@ -257,7 +296,7 @@ public final class VcFlowView extends ScrollView {
             return;
         }
         selectionLabel.setText("已选择 " + photoUris.size() + " 张票据照片（最多30张）");
-        planLabel.setText("允许：本地提取摘要、生成待核对报告。\n禁止：上传、发送或自动分享原图。\n选择变化会使旧授权失效。");
+        planLabel.setText("模型理解：" + safe(llmPlan) + "\n允许：本地提取摘要、生成待核对报告。\n禁止：上传、发送或自动分享原图。\n模型风险提示：" + safe(llmRisk) + "\n选择变化会使旧授权失效。");
         setAuthorizeEnabled(true);
         resultLabel.setText("待核对：授权后会生成本地报告，完成后请逐项检查。");
     }
@@ -289,12 +328,13 @@ public final class VcFlowView extends ScrollView {
         authorization = null;
         authorizedSpec = null;
         selectionLabel.setText("已选择目录：" + displayName(uri));
-        planLabel.setText("允许：只读扫描、去重、生成本地归档和报告。\n禁止：删除、移动、上传或发送原文件。\n选择变化会使旧授权失效。");
+        planLabel.setText("模型理解：" + safe(llmPlan) + "\n允许：只读扫描、去重、生成本地归档和报告。\n禁止：删除、移动、上传或发送原文件。\n模型风险提示：" + safe(llmRisk) + "\n选择变化会使旧授权失效。");
         setAuthorizeEnabled(true);
         resultLabel.setText("准备完成：授权后将在本机生成归档。");
     }
 
     private void authorizeAndStart() {
+        if (!llmReady) { showMessage("请先让助手理解任务，并阅读模型生成的风险提示。"); return; }
         String scope = scope();
         if (scope.isEmpty()) { showMessage("请先选择范围。"); return; }
         if (!callback.canStartTask()) { showMessage("已有任务正在处理，请等待完成或先取消。"); return; }
@@ -369,6 +409,63 @@ public final class VcFlowView extends ScrollView {
     private void showMessage(String message) {
         planLabel.setText(message);
         planLabel.setTextColor(Color.rgb(163, 72, 50));
+    }
+
+    private void understandIntent() {
+        final String request = intentInput.getText() == null ? "" : intentInput.getText().toString().trim();
+        if (request.length() < 2) { showMessage("请先用一句话描述任务。"); return; }
+        understandButton.setEnabled(false);
+        understandButton.setText("正在理解任务…");
+        planLabel.setText("正在请求模型计划。只发送这句任务描述；照片、文件名、文件内容和审计记录不会发送。");
+        new Thread(new Runnable() { @Override public void run() {
+            try {
+                final LlmIntentRouter.Decision decision = LlmIntentRouter.understand(activity.getApplicationContext(), request);
+                activity.runOnUiThread(new Runnable() { @Override public void run() { applyDecision(decision); } });
+            } catch (final Exception error) {
+                activity.runOnUiThread(new Runnable() { @Override public void run() {
+                    llmReady = false;
+                    understandButton.setEnabled(true);
+                    understandButton.setText("重试理解任务");
+                    showMessage("无法获得模型计划，任务没有开始：" + safe(error.getMessage()));
+                } });
+            }
+        }}, "quiet-llm-intent").start();
+    }
+
+    private void applyDecision(LlmIntentRouter.Decision decision) {
+        understandButton.setEnabled(true);
+        understandButton.setText("重新理解任务");
+        if (decision == null || decision.route == LlmIntentRouter.Route.UNSUPPORTED) {
+            llmReady = false;
+            showMessage("模型没有把这句话路由到现有的“票据整理”或“原文件整理”任务。请换一种描述。");
+            return;
+        }
+        applyingRoute = true;
+        try { switchMode(decision.route == LlmIntentRouter.Route.TICKET ? Mode.TICKET : Mode.ORIGINAL); }
+        finally { applyingRoute = false; }
+        llmPlan = safe(decision.plan);
+        llmRisk = safe(decision.risk);
+        llmReady = true;
+        permissionLabel.setText(defaultPermissionNotice());
+        planLabel.setText("模型理解：" + llmPlan + "\n模型风险提示：" + llmRisk + "\n下一步：选择本次范围；系统文件授权不等于任务授权。");
+        setAuthorizeEnabled(false);
+    }
+
+    private void invalidateLlmDecision() {
+        llmReady = false;
+        llmPlan = "";
+        llmRisk = "";
+        setAuthorizeEnabled(false);
+    }
+
+    private String defaultPermissionNotice() {
+        if (!llmReady) return mode == Mode.TICKET
+                ? "先让模型理解任务。照片可能包含姓名、金额、地址等敏感信息。"
+                : "先让模型理解任务。随后只读取你明确授权的目录。";
+        String local = mode == Mode.TICKET
+                ? "照片仅在本机处理，不上传原图。"
+                : "目录仅做只读整理，不删除、移动或上传原文件。";
+        return "模型风险提示：" + llmRisk + "\n" + local;
     }
 
     private static String safe(String value) { return value == null || value.trim().isEmpty() ? "未知错误" : value; }
