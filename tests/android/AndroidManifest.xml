@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="app.quietagent.test">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="31" />
+    <application android:label="Quiet Agent instrumentation tests" android:debuggable="true">
+        <activity android:name=".ProbeActivity" android:exported="true" android:windowSoftInputMode="adjustResize" />
+    </application>
+    <instrumentation
+        android:name=".QuietInstrumentation"
+        android:targetPackage="app.quietagent"
+        android:functionalTest="true" />
+</manifest>
