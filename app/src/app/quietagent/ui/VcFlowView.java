@@ -79,6 +79,11 @@ public final class VcFlowView extends ScrollView {
     private String llmPlan = "";
     private String llmRisk = "";
     private boolean llmReady;
+    /** True while the user selected the work mode directly instead of routing it through the LLM. */
+    private boolean manualMode = true;
+    /** Manual mode is ready only after a scope has been selected and its local notice is shown. */
+    private boolean manualReady;
+    private boolean riskReady;
     private boolean applyingRoute;
     /** Monotonically increases whenever the user changes the model input or route. */
     private long llmRevision;
@@ -101,14 +106,14 @@ public final class VcFlowView extends ScrollView {
         root.addView(eyebrow, lp(-1, -2, 0, 0, 0, 10));
         TextView title = text("Quiet Agent", 30, INK, true);
         root.addView(title, lp(-1, -2, 0, 0, 0, 5));
-        TextView intro = text("从通知进入，描述任务后再授权开始。", 15, MUTED, false);
+        TextView intro = text("从通知进入，选择工作方式或描述任务，再授权开始。", 15, MUTED, false);
         intro.setLineSpacing(2f, 1f);
         root.addView(intro, lp(-1, -2, 0, 0, 0, 18));
 
         LinearLayout intentCard = card();
         root.addView(intentCard, lp(-1, -2, 0, 0, 0, 12));
         intentCard.addView(text("任务", 17, INK, true), lp(-1, -2, 18, 16, 18, 5));
-        TextView intentHint = text("模型只读取这句话，用来选择已有任务并生成本次风险提示。不会读取照片、文件名或文件内容。", 13, MUTED, false);
+        TextView intentHint = text("可以直接选择工作方式和范围；如果需要，也可以让模型理解一句自然语言任务。模型只读取这句话，不会读取照片、文件名或文件内容。\n", 13, MUTED, false);
         intentHint.setLineSpacing(2f, 1f);
         intentCard.addView(intentHint, lp(-1, -2, 18, 0, 18, 8));
         intentInput = new EditText(context);
@@ -232,10 +237,17 @@ public final class VcFlowView extends ScrollView {
 
     private void switchMode(Mode next) {
         if (mode == next) return;
-        if (!applyingRoute) invalidateLlmDecision();
+        if (!applyingRoute) {
+            manualMode = true;
+            invalidateLlmDecision();
+        } else {
+            manualMode = false;
+        }
         mode = next;
         authorization = null;
         authorizedSpec = null;
+        manualReady = false;
+        riskReady = false;
         photoUris.clear();
         sourceTree = null;
         jobId = "";
@@ -298,7 +310,11 @@ public final class VcFlowView extends ScrollView {
             return;
         }
         selectionLabel.setText("已选择 " + photoUris.size() + " 张票据照片（最多30张）");
-        planLabel.setText("模型理解：" + safe(llmPlan) + "\n允许：本地提取摘要、生成待核对报告。\n禁止：上传、发送或自动分享原图。\n模型风险提示：" + safe(llmRisk) + "\n选择变化会使旧授权失效。");
+        if (manualMode) {
+            manualReady = true;
+            riskReady = true;
+        }
+        planLabel.setText(preAuthorizationText());
         setAuthorizeEnabled(true);
         resultLabel.setText("待核对：授权后会生成本地报告，完成后请逐项检查。");
     }
@@ -329,14 +345,21 @@ public final class VcFlowView extends ScrollView {
         sourceTree = uri;
         authorization = null;
         authorizedSpec = null;
+        if (manualMode) {
+            manualReady = true;
+            riskReady = true;
+        }
         selectionLabel.setText("已选择目录：" + displayName(uri));
-        planLabel.setText("模型理解：" + safe(llmPlan) + "\n允许：只读扫描、去重、生成本地归档和报告。\n禁止：删除、移动、上传或发送原文件。\n模型风险提示：" + safe(llmRisk) + "\n选择变化会使旧授权失效。");
+        planLabel.setText(preAuthorizationText());
         setAuthorizeEnabled(true);
         resultLabel.setText("准备完成：授权后将在本机生成归档。");
     }
 
     private void authorizeAndStart() {
-        if (!llmReady) { showMessage("请先让助手理解任务，并阅读模型生成的风险提示。"); return; }
+        if (!isReadyForAuthorization()) {
+            showMessage(manualMode ? "请先选择范围并阅读本地风险提示。" : "请先让助手理解任务，并阅读模型生成的风险提示。");
+            return;
+        }
         String scope = scope();
         if (scope.isEmpty()) { showMessage("请先选择范围。"); return; }
         if (!callback.canStartTask()) { showMessage("已有任务正在处理，请等待完成或先取消。"); return; }
@@ -450,25 +473,33 @@ public final class VcFlowView extends ScrollView {
         applyingRoute = true;
         try { switchMode(decision.route == LlmIntentRouter.Route.TICKET ? Mode.TICKET : Mode.ORIGINAL); }
         finally { applyingRoute = false; }
+        manualMode = false;
+        manualReady = false;
         llmPlan = safe(decision.plan);
         llmRisk = safe(decision.risk);
         llmReady = true;
+        riskReady = true;
         permissionLabel.setText(defaultPermissionNotice());
         planLabel.setText("模型理解：" + llmPlan + "\n模型风险提示：" + llmRisk + "\n下一步：选择本次范围；系统文件授权不等于任务授权。");
         setAuthorizeEnabled(false);
     }
 
     private void invalidateLlmDecision() {
+        boolean keepManualRisk = manualMode && manualReady && riskReady;
         llmRevision++;
         llmReady = false;
         llmPlan = "";
         llmRisk = "";
+        riskReady = keepManualRisk;
         understandButton.setEnabled(true);
         understandButton.setText("理解任务");
         setAuthorizeEnabled(false);
     }
 
     private String defaultPermissionNotice() {
+        if (manualMode) return mode == Mode.TICKET
+                ? "本地风险提示：照片可能包含姓名、金额、地址等敏感信息。仅在本机处理，不上传原图。"
+                : "本地风险提示：你选择的目录可能包含个人资料、合同和财务信息。只读取本次授权目录，执行只读扫描、去重和生成本地归档；不会删除、移动、上传或发送原文件。完成后如需导出，还会再次请求确认。";
         if (!llmReady) return mode == Mode.TICKET
                 ? "先让模型理解任务。照片可能包含姓名、金额、地址等敏感信息。"
                 : "先让模型理解任务。随后只读取你明确授权的目录。";
@@ -476,6 +507,21 @@ public final class VcFlowView extends ScrollView {
                 ? "照片仅在本机处理，不上传原图。"
                 : "目录仅做只读整理，不删除、移动或上传原文件。";
         return "模型风险提示：" + llmRisk + "\n" + local;
+    }
+
+    private String preAuthorizationText() {
+        String allowed = mode == Mode.TICKET
+                ? "允许：本地提取摘要、生成待核对报告。\n禁止：上传、发送或自动分享原图。"
+                : "允许：只读扫描、去重、生成本地归档和报告。\n禁止：删除、移动、上传或发送原文件。";
+        String notice = manualMode ? defaultPermissionNotice() : "模型风险提示：" + safe(llmRisk);
+        String plan = manualMode ? "手动选择：" + (mode == Mode.TICKET ? "票据整理" : "原文件整理") : "模型理解：" + safe(llmPlan);
+        return plan + "\n" + allowed + "\n" + notice + "\n系统文件授权不等于本次任务授权；选择变化会使旧授权失效。";
+    }
+
+    private boolean isReadyForAuthorization() {
+        boolean hasScope = !scope().isEmpty();
+        if (!hasScope || !riskReady) return false;
+        return llmReady || (manualMode && manualReady);
     }
 
     private static String safe(String value) { return value == null || value.trim().isEmpty() ? "未知错误" : value; }
