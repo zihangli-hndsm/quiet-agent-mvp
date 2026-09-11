@@ -48,11 +48,11 @@ public final class VcFlowView extends ScrollView {
         void onClearTaskDataRequested(String jobId);
     }
 
-    private static final int BG = Color.WHITE;
-    private static final int GREEN = Color.rgb(24, 103, 67);
-    private static final int INK = Color.rgb(29, 40, 34);
-    private static final int MUTED = Color.rgb(91, 107, 97);
-    private static final int LINE = Color.rgb(220, 229, 222);
+    private static final int BG = Color.rgb(242, 242, 247);
+    private static final int BLUE = Color.rgb(0, 122, 255);
+    private static final int INK = Color.rgb(28, 28, 30);
+    private static final int MUTED = Color.rgb(99, 99, 102);
+    private static final int LINE = Color.TRANSPARENT;
     private final Activity activity;
     private final Callback callback;
     private final AuthorizationManager authorizer;
@@ -80,6 +80,8 @@ public final class VcFlowView extends ScrollView {
     private String llmRisk = "";
     private boolean llmReady;
     private boolean applyingRoute;
+    /** Monotonically increases whenever the user changes the model input or route. */
+    private long llmRevision;
 
     private enum Mode { TICKET, ORIGINAL }
 
@@ -95,39 +97,39 @@ public final class VcFlowView extends ScrollView {
         root = column(20, 20, 20, 32);
         addView(root);
 
-        TextView eyebrow = text("QUIET AGENT  ·  本地任务授权", 12, GREEN, true);
+        TextView eyebrow = text("QUIET AGENT  ·  本地任务授权", 12, BLUE, true);
         root.addView(eyebrow, lp(-1, -2, 0, 0, 0, 10));
-        TextView title = text("先说要做什么，再授权开始", 30, INK, true);
+        TextView title = text("Quiet Agent", 30, INK, true);
         root.addView(title, lp(-1, -2, 0, 0, 0, 5));
-        TextView intro = text("每次授权只对应当前选择。修改选择后，旧授权立即失效。", 15, MUTED, false);
+        TextView intro = text("从通知进入，描述任务后再授权开始。", 15, MUTED, false);
         intro.setLineSpacing(2f, 1f);
         root.addView(intro, lp(-1, -2, 0, 0, 0, 18));
 
         LinearLayout intentCard = card();
         root.addView(intentCard, lp(-1, -2, 0, 0, 0, 12));
-        intentCard.addView(text("一句话描述任务", 17, INK, true), lp(-1, -2, 18, 16, 18, 5));
+        intentCard.addView(text("任务", 17, INK, true), lp(-1, -2, 18, 16, 18, 5));
         TextView intentHint = text("模型只读取这句话，用来选择已有任务并生成本次风险提示。不会读取照片、文件名或文件内容。", 13, MUTED, false);
         intentHint.setLineSpacing(2f, 1f);
         intentCard.addView(intentHint, lp(-1, -2, 18, 0, 18, 8));
         intentInput = new EditText(context);
         intentInput.setTextSize(16);
         intentInput.setTextColor(INK);
-        intentInput.setHintTextColor(Color.rgb(155, 167, 159));
+        intentInput.setHintTextColor(Color.rgb(142, 142, 147));
         intentInput.setHint("例如：整理这些餐饮票据，做一个本地待核对汇总");
         intentInput.setSingleLine(false);
         intentInput.setMinHeight(dp(76));
         intentInput.setPadding(dp(12), dp(8), dp(12), dp(8));
-        intentInput.setBackground(roundDrawable(Color.rgb(249, 251, 249), LINE, 10));
+        intentInput.setBackground(roundDrawable(Color.rgb(242, 242, 247), LINE, 10));
         intentInput.setContentDescription("llm-task-intent");
         intentInput.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
-                if (llmReady) invalidateLlmDecision();
+                invalidateLlmDecision();
             }
             @Override public void afterTextChanged(Editable value) { }
         });
         intentCard.addView(intentInput, lp(-1, -2, 18, 0, 18, 10));
-        understandButton = button("让助手理解任务并提示风险", GREEN, Color.WHITE);
+        understandButton = button("理解任务", BLUE, Color.WHITE);
         understandButton.setContentDescription("llm-understand-task");
         understandButton.setOnClickListener(v -> understandIntent());
         intentCard.addView(understandButton, lp(-1, 48, 18, 0, 18, 16));
@@ -135,7 +137,7 @@ public final class VcFlowView extends ScrollView {
         LinearLayout modeCard = card();
         root.addView(modeCard, lp(-1, -2, 0, 0, 0, 12));
         modeCard.addView(text("工作方式", 17, INK, true), lp(-1, -2, 18, 16, 18, 5));
-        modeLabel = text("默认：票据整理", 14, GREEN, true);
+        modeLabel = text("默认：票据整理", 14, BLUE, true);
         modeCard.addView(modeLabel, lp(-1, -2, 18, 0, 18, 8));
         LinearLayout modeButtons = row();
         Button ticket = outlineButton("票据整理");
@@ -154,7 +156,7 @@ public final class VcFlowView extends ScrollView {
         selectionLabel = text("请选择要整理的票据照片", 15, MUTED, false);
         selectionLabel.setLineSpacing(2f, 1f);
         selectCard.addView(selectionLabel, lp(-1, -2, 18, 0, 18, 8));
-        chooseButton = button("选择票据照片", GREEN, Color.WHITE);
+        chooseButton = button("选择照片", BLUE, Color.WHITE);
         chooseButton.setContentDescription("select-ticket-photos");
         chooseButton.setOnClickListener(v -> selectCurrentScope());
         selectCard.addView(chooseButton, lp(-1, 48, 18, 0, 18, 12));
@@ -168,7 +170,7 @@ public final class VcFlowView extends ScrollView {
         planLabel = text("允许的操作会显示在这里。", 14, MUTED, false);
         planLabel.setLineSpacing(2f, 1f);
         planCard.addView(planLabel, lp(-1, -2, 18, 0, 18, 10));
-        authorizeButton = button("授权并开始票据整理", GREEN, Color.WHITE);
+        authorizeButton = button("授权并开始", BLUE, Color.WHITE);
         authorizeButton.setContentDescription("authorize-and-start");
         setAuthorizeEnabled(false);
         authorizeButton.setOnClickListener(v -> authorizeAndStart());
@@ -245,14 +247,14 @@ public final class VcFlowView extends ScrollView {
             chooseButton.setText("选择票据照片");
             chooseButton.setContentDescription("select-ticket-photos");
             permissionLabel.setText(defaultPermissionNotice());
-            authorizeButton.setText("授权并开始票据整理");
+            authorizeButton.setText("授权并开始");
         } else {
             modeLabel.setText("原文件整理：只读归档");
             selectionLabel.setText("请选择要读取的目录");
             chooseButton.setText("挑选原文件目录");
             chooseButton.setContentDescription("select-original-folder");
             permissionLabel.setText(defaultPermissionNotice());
-            authorizeButton.setText("授权并开始原文件整理");
+            authorizeButton.setText("授权并开始");
         }
         planLabel.setText("选择已改变，之前的授权已失效。\n允许的操作会显示在这里。");
         setAuthorizeEnabled(false);
@@ -414,18 +416,23 @@ public final class VcFlowView extends ScrollView {
     private void understandIntent() {
         final String request = intentInput.getText() == null ? "" : intentInput.getText().toString().trim();
         if (request.length() < 2) { showMessage("请先用一句话描述任务。"); return; }
+        final long requestRevision = ++llmRevision;
         understandButton.setEnabled(false);
         understandButton.setText("正在理解任务…");
         planLabel.setText("正在请求模型计划。只发送这句任务描述；照片、文件名、文件内容和审计记录不会发送。");
         new Thread(new Runnable() { @Override public void run() {
             try {
                 final LlmIntentRouter.Decision decision = LlmIntentRouter.understand(activity.getApplicationContext(), request);
-                activity.runOnUiThread(new Runnable() { @Override public void run() { applyDecision(decision); } });
+                activity.runOnUiThread(new Runnable() { @Override public void run() {
+                    if (requestRevision != llmRevision) return;
+                    applyDecision(decision);
+                } });
             } catch (final Exception error) {
                 activity.runOnUiThread(new Runnable() { @Override public void run() {
+                    if (requestRevision != llmRevision) return;
                     llmReady = false;
                     understandButton.setEnabled(true);
-                    understandButton.setText("重试理解任务");
+                    understandButton.setText("重试");
                     showMessage("无法获得模型计划，任务没有开始：" + safe(error.getMessage()));
                 } });
             }
@@ -434,7 +441,7 @@ public final class VcFlowView extends ScrollView {
 
     private void applyDecision(LlmIntentRouter.Decision decision) {
         understandButton.setEnabled(true);
-        understandButton.setText("重新理解任务");
+        understandButton.setText("重新理解");
         if (decision == null || decision.route == LlmIntentRouter.Route.UNSUPPORTED) {
             llmReady = false;
             showMessage("模型没有把这句话路由到现有的“票据整理”或“原文件整理”任务。请换一种描述。");
@@ -452,9 +459,12 @@ public final class VcFlowView extends ScrollView {
     }
 
     private void invalidateLlmDecision() {
+        llmRevision++;
         llmReady = false;
         llmPlan = "";
         llmRisk = "";
+        understandButton.setEnabled(true);
+        understandButton.setText("理解任务");
         setAuthorizeEnabled(false);
     }
 
@@ -483,10 +493,10 @@ public final class VcFlowView extends ScrollView {
         LinearLayout x = row(); x.setOrientation(LinearLayout.VERTICAL); x.setPadding(dp(l), dp(t), dp(r), dp(b)); return x;
     }
     private LinearLayout row() { LinearLayout x = new LinearLayout(activity); x.setOrientation(LinearLayout.HORIZONTAL); x.setGravity(Gravity.CENTER_VERTICAL); return x; }
-    private LinearLayout card() { LinearLayout x = new LinearLayout(activity); x.setOrientation(LinearLayout.VERTICAL); x.setBackground(roundDrawable(Color.WHITE, LINE, 14)); return x; }
+    private LinearLayout card() { LinearLayout x = new LinearLayout(activity); x.setOrientation(LinearLayout.VERTICAL); x.setBackground(roundDrawable(Color.WHITE, Color.WHITE, 20)); return x; }
     private TextView text(String value, float size, int color, boolean bold) { TextView t = new TextView(activity); t.setText(value); t.setTextSize(size); t.setTextColor(color); t.setTypeface(Typeface.create("sans", bold ? Typeface.BOLD : Typeface.NORMAL)); return t; }
-    private Button button(String value, int fill, int foreground) { Button b = new Button(activity); b.setText(value); b.setTextSize(15); b.setTextColor(foreground); b.setAllCaps(false); b.setTypeface(Typeface.DEFAULT, Typeface.BOLD); b.setBackground(roundDrawable(fill, fill, 10)); return b; }
-    private Button outlineButton(String value) { Button b = button(value, Color.TRANSPARENT, GREEN); b.setBackground(roundDrawable(Color.TRANSPARENT, GREEN, 10)); return b; }
+    private Button button(String value, int fill, int foreground) { Button b = new Button(activity); b.setText(value); b.setTextSize(15); b.setTextColor(foreground); b.setAllCaps(false); b.setTypeface(Typeface.DEFAULT, Typeface.BOLD); b.setStateListAnimator(null); b.setElevation(0); b.setBackground(roundDrawable(fill, fill, 12)); return b; }
+    private Button outlineButton(String value) { return button(value, Color.rgb(239, 245, 255), BLUE); }
     private android.graphics.drawable.GradientDrawable roundDrawable(int fill, int stroke, int radius) { android.graphics.drawable.GradientDrawable d = new android.graphics.drawable.GradientDrawable(); d.setColor(fill); d.setCornerRadius(dp(radius)); d.setStroke(dp(1), stroke); return d; }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private LinearLayout.LayoutParams lp(int w, int h, int l, int t, int r, int b) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(w < 0 ? w : dp(w), h < 0 ? h : dp(h)); p.setMargins(dp(l), dp(t), dp(r), dp(b)); return p; }

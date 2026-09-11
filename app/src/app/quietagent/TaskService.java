@@ -91,6 +91,7 @@ public final class TaskService extends Service {
             ACTIVE.set(false); activeJobId = null; stopSelf(); return START_NOT_STICKY;
         }
         startForeground(NOTIFICATION, notification("可继续使用其他应用；不会占用屏幕或键盘"));
+        EntryNotification.hide(this);
         wake = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "QuietAgent:work");
         wake.acquire(15 * 60 * 1000L);
         status = new JSONObject();
@@ -127,6 +128,7 @@ public final class TaskService extends Service {
                     ACTIVE.set(false); activeJobId = null; activePending = null;
                     if (wake != null && wake.isHeld()) wake.release();
                     stopForeground(true); stopSelf();
+                    EntryNotification.show(TaskService.this, "SUCCEEDED".equals(status.optString("state")), jobId);
                 }});
             }
         }

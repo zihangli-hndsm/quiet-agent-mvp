@@ -44,7 +44,7 @@ import java.util.List;
 /** Main screen for the offline, read-only file assistant. */
 public final class MainActivity extends Activity {
     private static final int REQUEST_FOLDER = 4107;
-    private static final int BG = Color.rgb(247, 249, 246);
+    private static final int BG = Color.rgb(242, 242, 247);
     private static final int CARD = Color.WHITE;
     private static final int GREEN = Color.rgb(24, 103, 67);
     private static final int GREEN_DARK = Color.rgb(15, 75, 48);
@@ -90,6 +90,7 @@ public final class MainActivity extends Activity {
         qaMode = getIntent() != null && getIntent().getBooleanExtra("qa_test", false);
         if (qaMode) buildScreen();
         else buildVcScreen();
+        if (!TaskService.isRunning()) EntryNotification.show(this, false, null);
     }
 
     @Override protected void onResume() {
