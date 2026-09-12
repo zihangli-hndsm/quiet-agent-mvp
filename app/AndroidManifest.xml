@@ -3,11 +3,20 @@
  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
  <uses-permission android:name="android.permission.WAKE_LOCK"/>
  <uses-permission android:name="android.permission.INTERNET"/>
+ <uses-permission android:name="android.permission.READ_SMS"/>
+ <queries>
+  <intent><action android:name="android.provider.Telephony.SMS_DELIVER"/></intent>
+  <intent><action android:name="android.intent.action.SENDTO"/><data android:scheme="smsto"/></intent>
+  <intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.APP_MESSAGING"/></intent>
+ </queries>
  <application android:label="静默整理" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:usesCleartextTraffic="false" android:supportsRtl="true">
   <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
    <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
   </activity>
   <activity android:name=".ReportActivity" android:exported="false"/>
+  <activity android:name=".SmsActivity" android:exported="false"/>
+  <service android:name=".SmsAnalysisService" android:exported="false" android:foregroundServiceType="dataSync"/>
+  <provider android:name=".SmsShareProvider" android:authorities="app.quietagent.sms-results" android:exported="false" android:grantUriPermissions="true"/>
   <service android:name=".TaskService" android:exported="false" android:foregroundServiceType="dataSync"/>
   <provider android:name=".ShareProvider" android:authorities="app.quietagent.results" android:exported="false" android:grantUriPermissions="true"/>
  </application>

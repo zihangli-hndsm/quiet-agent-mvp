@@ -79,10 +79,11 @@ public final class QuietInstrumentation extends Instrumentation {
         JSONObject result = new JSONObject();
         int code = 0;
         try {
-            if (!"content".equals(selected) && !"smoke".equals(selected) && !"cancel".equals(selected) && !"external".equals(selected) && !"export".equals(selected) && !"ui".equals(selected) && !"receipt".equals(selected) && !"permission".equals(selected) && !"interrupt_start".equals(selected) && !"recover".equals(selected) && !"inspect_status".equals(selected)) {
+            if (!"sms".equals(selected) && !"content".equals(selected) && !"smoke".equals(selected) && !"cancel".equals(selected) && !"external".equals(selected) && !"export".equals(selected) && !"ui".equals(selected) && !"receipt".equals(selected) && !"permission".equals(selected) && !"interrupt_start".equals(selected) && !"recover".equals(selected) && !"inspect_status".equals(selected)) {
                 throw new IllegalArgumentException("unknown scenario");
             }
-            if ("content".equals(selected)) ContentChecks.run(this, result);
+            if ("sms".equals(selected)) SmsChecks.run(this,result);
+            else if ("content".equals(selected)) ContentChecks.run(this, result);
             else if ("smoke".equals(selected)) runSmoke(result);
             else if("external".equals(selected)) runExternal(result);
             else if("export".equals(selected)) runExport(result);

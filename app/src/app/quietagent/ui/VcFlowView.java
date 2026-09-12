@@ -158,6 +158,10 @@ public final class VcFlowView extends ScrollView {
         original.setOnClickListener(v -> switchMode(Mode.ORIGINAL));
         modeButtons.addView(original, lp(0, 46, 6, 0, 18, 16, 1f));
         modeCard.addView(modeButtons);
+        Button sms = outlineButton("短信整理 · 提取表格 / 筛选垃圾短信");
+        sms.setContentDescription("mode-sms");
+        sms.setOnClickListener(v -> activity.startActivity(new Intent(activity, app.quietagent.SmsActivity.class)));
+        modeCard.addView(sms, lp(-1, 48, 18, 0, 18, 16));
 
         LinearLayout selectCard = card();
         root.addView(selectCard, lp(-1, -2, 0, 0, 0, 12));
