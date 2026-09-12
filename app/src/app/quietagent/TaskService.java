@@ -109,7 +109,8 @@ public final class TaskService extends Service {
             if (pending.spec.type() == TaskSpec.TaskType.OCR) runReceipt(jobId);
             else runArchive(jobId, pending);
             put("state", "SUCCEEDED"); put("phase", "已核验");
-            put("message", "结果已回读校验；自动识别金额仍需用户核对");
+            put("message", pending.spec.type() == TaskSpec.TaskType.OCR
+                ? "结果已回读校验；自动识别金额仍需用户核对" : "文件归档已回读校验；分类建议请在报告中核对");
             Log.i("QuietAgent", "SUCCESS id=" + jobId);
         } catch (Exception error) {
             String end = destroyedWhileRunning ? AuthorizationManager.INTERRUPTED
@@ -153,9 +154,12 @@ public final class TaskService extends Service {
     private void runArchive(String jobId, ReceiptJobStore.Pending initial) throws IOException {
         jobs.consume(jobId, authorizer);
         ReceiptJobStore.Pending pending = jobs.readForService(jobId);
-        Engine.Source source = Sources.create(this, pending.sourceUris.get(0));
+        boolean semantic = pending.spec.summary().startsWith(SemanticFiles.PREFIX);
+        Engine.Source source = semantic ? SemanticFiles.source(jobs.jobDir(jobId), pending.spec.summary(), pending.sourceUris.get(0))
+                : Sources.create(this, pending.sourceUris.get(0));
+        File outputDir = new File(jobs.jobDir(jobId), "archive-output");
         Engine.Result result = Engine.run(source,
-                Plan.parse("把这个目录里的文件去重，按类型归档"), jobs.jobDir(jobId),
+                semantic ? Plan.semantic() : Plan.parse("把这个目录里的文件去重，按类型归档"), outputDir,
                 new Engine.Listener() {
                     @Override public void update(String phase, int done, int total) { progress(phase, done, total); }
                 }, new Engine.Cancellation() {
@@ -163,6 +167,15 @@ public final class TaskService extends Service {
                 });
         jobs.clearRawUri(jobId);
         if (cancelled.get()) throw new java.io.InterruptedIOException("任务已取消");
+        for (String name : new String[]{"archive.zip", "manifest.json", "summary.html"}) {
+            if (!new File(outputDir, name).renameTo(new File(jobs.jobDir(jobId), name)))
+                throw new IOException("无法发布归档结果");
+        }
+        outputDir.delete();
+        if (semantic) {
+            SemanticFiles.saveDetails(jobs.jobDir(jobId));
+            SemanticFiles.discard(new File(jobs.jobDir(jobId), ".semantic"));
+        }
         jobs.recordOutputAndPublishCredential(jobId, result.archiveSha256, authorizer);
         jobs.publishComplete(jobId, result.archiveSha256);
         put("selected", result.selected); put("unique", result.unique); put("duplicates", result.duplicates);

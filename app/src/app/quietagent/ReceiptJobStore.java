@@ -25,9 +25,11 @@ public final class ReceiptJobStore {
     private static final String CREDENTIAL = "credential";
     private static final int MAX_SOURCES = 30;
     private final File root;
+    private final Context context;
 
     public ReceiptJobStore(Context context) {
         if (context == null) throw new IllegalArgumentException("context is required");
+        this.context = context.getApplicationContext();
         root = new File(context.getFilesDir(), "receipt-jobs");
         if (!root.exists() && !root.mkdirs() && !root.isDirectory()) throw new IllegalStateException("无法创建票据任务目录");
     }
@@ -63,6 +65,7 @@ public final class ReceiptJobStore {
         props.setProperty("sourceCount", Integer.toString(cleanUris.size()));
         for (int i = 0; i < cleanUris.size(); i++) props.setProperty("sourceUri." + i, cleanUris.get(i));
         atomicProperties(new File(dir, PENDING), props);
+        SemanticFiles.adopt(context, spec.summary(), dir);
         return id;
     }
 
@@ -160,6 +163,8 @@ public final class ReceiptJobStore {
         try { clearRawUri(jobId); } catch (Exception ignored) { }
         File temp = new File(dir, ".receipt-temp");
         if (temp.exists()) deleteTreeChecked(temp);
+        File semantic = new File(dir, ".semantic");
+        if (semantic.exists()) deleteTreeChecked(semantic);
         cleanupUnpublished(jobId);
         try {
             authorization.recordEvent(jobId, pending.spec, pending.nonce, AuthorizationManager.INTERRUPTED);
@@ -187,6 +192,10 @@ public final class ReceiptJobStore {
     public synchronized void cleanupUnpublished(String jobId) throws IOException {
         File dir = dirChecked(jobId);
         if (new File(dir, ".complete").isFile()) throw new IOException("已完成任务不能清理");
+        for (String temp : new String[]{"archive-output", ".semantic"}) {
+            File staged = new File(dir, temp);
+            if (staged.exists()) deleteTreeChecked(staged);
+        }
         String[] names = {"archive.zip", "archive.zip.part", "manifest.json", "manifest.json.part",
                 "receipts.csv", "receipts.csv.part", "summary.html", "summary.html.part",
                 "audit-snapshot", "audit-snapshot.part", ".complete.part", "credential"};

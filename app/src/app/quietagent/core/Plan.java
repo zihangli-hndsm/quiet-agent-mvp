@@ -7,7 +7,12 @@ import java.util.Set;
 
 /** A small deterministic plan for local file organization. */
 public final class Plan {
-    public enum Grouping { NONE, TYPE, MONTH }
+    public enum Grouping { NONE, TYPE, MONTH, PURPOSE }
+
+    /** Used only with a validated user-confirmed category source. */
+    public static Plan semantic() {
+        return new Plan("用途分类", true, Grouping.PURPOSE, Filter.ANY, EnumSet.of(Filter.ANY), null);
+    }
     public enum Filter { ANY, PDF, IMAGE, DOCUMENT, AUDIO, VIDEO }
 
     public final boolean deduplicate;
@@ -109,9 +114,10 @@ public final class Plan {
     }
 
     public String summary() {
-        StringBuilder b = new StringBuilder("已按本地规则处理：");
+        StringBuilder b = new StringBuilder(grouping == Grouping.PURPOSE ? "已按确认的用途建议处理：" : "已按本地规则处理：");
         b.append(deduplicate ? "去重" : "保留重复").append("；");
         if (grouping == Grouping.TYPE) b.append("按类型");
+        else if (grouping == Grouping.PURPOSE) b.append("按已确认的模型用途建议（待核对）");
         else if (grouping == Grouping.MONTH) b.append("按月份");
         else b.append("不分类");
         b.append("；类型=");
