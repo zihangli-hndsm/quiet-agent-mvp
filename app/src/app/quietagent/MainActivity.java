@@ -86,6 +86,7 @@ public final class MainActivity extends Activity {
             getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
         }
         store = new Store(this);
+        SemanticFiles.recoverStale(this);
         recoverInterruptedTask();
         qaMode = getIntent() != null && getIntent().getBooleanExtra("qa_test", false);
         if (qaMode) buildScreen();

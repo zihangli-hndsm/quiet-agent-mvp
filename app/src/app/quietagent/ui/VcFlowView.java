@@ -22,6 +22,7 @@ import android.widget.TextView;
 
 import app.quietagent.security.AtomicFileStateStore;
 import app.quietagent.LlmIntentRouter;
+import app.quietagent.SemanticFiles;
 import app.quietagent.security.Authorization;
 import app.quietagent.security.AuthorizationException;
 import app.quietagent.security.AuthorizationManager;
@@ -84,6 +85,9 @@ public final class VcFlowView extends ScrollView {
     /** Manual mode is ready only after a scope has been selected and its local notice is shown. */
     private boolean manualReady;
     private boolean riskReady;
+    private boolean semanticBusy;
+    private boolean contentClassification;
+    private String semanticSummary;
     private boolean applyingRoute;
     /** Monotonically increases whenever the user changes the model input or route. */
     private long llmRevision;
@@ -207,6 +211,9 @@ public final class VcFlowView extends ScrollView {
         clearButton.setContentDescription("vc-clear-task-data");
         clearButton.setOnClickListener(v -> confirmClear());
         resultCard.addView(clearButton, lp(-1, 44, 18, 0, 18, 16));
+        // Establish the selected scope before asking the model to understand the request.
+        root.removeView(intentCard);
+        root.addView(intentCard, root.indexOfChild(selectCard) + 1);
     }
 
     public boolean handleActivityResult(int requestCode, int resultCode, Intent data) {
@@ -227,6 +234,10 @@ public final class VcFlowView extends ScrollView {
         if ("RUNNING".equals(state)) {
             resultLabel.setText("正在本机后台处理。可以切到其他应用，屏幕、焦点和键盘不会被占用。\n" + safe(message));
         } else if (complete) {
+            if (mode == Mode.ORIGINAL) {
+                resultLabel.setText("已选 " + selected + " 个文件 · 归档 " + unique + " 个 · 重复 " + duplicates + " 个\n" + safe(message));
+                return;
+            }
             String amount = totalCents == null ? "待核对" : formatCents(totalCents.longValue()) + " 元";
             resultLabel.setText("已选 " + selected + " 张 · 归档 " + unique + " 张 · 重复 " + duplicates
                     + " 张\n自动识别合计：" + amount + "（待核对）");
@@ -236,7 +247,8 @@ public final class VcFlowView extends ScrollView {
     }
 
     private void switchMode(Mode next) {
-        if (mode == next) return;
+        if (semanticBusy) return;
+        if (mode == next && applyingRoute) return;
         if (!applyingRoute) {
             manualMode = true;
             invalidateLlmDecision();
@@ -274,6 +286,7 @@ public final class VcFlowView extends ScrollView {
     }
 
     private void selectCurrentScope() {
+        if (semanticBusy) return;
         if (mode == Mode.TICKET) {
             new AlertDialog.Builder(activity).setTitle("照片可能包含敏感信息")
                     .setMessage("票据照片可能包含姓名、金额、地址或账号。继续后只在本机处理，选择结果会用于本次授权。")
@@ -296,6 +309,11 @@ public final class VcFlowView extends ScrollView {
     }
 
     private void acceptPhotos(Intent data) {
+        llmRevision++;
+        understandButton.setEnabled(true);
+        understandButton.setText("理解任务");
+        if (!manualMode) { llmReady = false; riskReady = false; }
+        semanticSummary = null;
         photoUris.clear();
         ClipData clip = data.getClipData();
         if (clip != null) {
@@ -315,7 +333,7 @@ public final class VcFlowView extends ScrollView {
             riskReady = true;
         }
         planLabel.setText(preAuthorizationText());
-        setAuthorizeEnabled(true);
+        setAuthorizeEnabled(isReadyForAuthorization());
         resultLabel.setText("待核对：授权后会生成本地报告，完成后请逐项检查。");
     }
 
@@ -343,6 +361,11 @@ public final class VcFlowView extends ScrollView {
             return;
         }
         sourceTree = uri;
+        llmRevision++;
+        understandButton.setEnabled(true);
+        understandButton.setText("理解任务");
+        if (!manualMode) { llmReady = false; riskReady = false; }
+        semanticSummary = null;
         authorization = null;
         authorizedSpec = null;
         if (manualMode) {
@@ -351,11 +374,12 @@ public final class VcFlowView extends ScrollView {
         }
         selectionLabel.setText("已选择目录：" + displayName(uri));
         planLabel.setText(preAuthorizationText());
-        setAuthorizeEnabled(true);
+        setAuthorizeEnabled(isReadyForAuthorization());
         resultLabel.setText("准备完成：授权后将在本机生成归档。");
     }
 
     private void authorizeAndStart() {
+        if (semanticBusy) return;
         if (!isReadyForAuthorization()) {
             showMessage(manualMode ? "请先选择范围并阅读本地风险提示。" : "请先让助手理解任务，并阅读模型生成的风险提示。");
             return;
@@ -363,10 +387,14 @@ public final class VcFlowView extends ScrollView {
         String scope = scope();
         if (scope.isEmpty()) { showMessage("请先选择范围。"); return; }
         if (!callback.canStartTask()) { showMessage("已有任务正在处理，请等待完成或先取消。"); return; }
+        if (!manualMode && contentClassification && mode == Mode.ORIGINAL && semanticSummary == null) {
+            startContentAnalysis();
+            return;
+        }
         try {
             TaskSpec spec = mode == Mode.TICKET
                     ? TaskSpec.ocr(scope, "票据照片 · 本地摘要 · 待核对")
-                    : TaskSpec.archive(scope, "原文件 · 只读整理归档");
+                    : TaskSpec.archive(scope, semanticSummary == null ? "原文件 · 只读整理归档" : semanticSummary);
             Authorization auth = authorizer.authorize(spec);
             authorization = auth;
             authorizedSpec = spec;
@@ -379,6 +407,8 @@ public final class VcFlowView extends ScrollView {
             reportButton.setEnabled(false);
             exportButton.setEnabled(false);
             setAuthorizeEnabled(false);
+            semanticSummary = null;
+            riskReady = false;
         } catch (AuthorizationException ex) {
             showMessage("授权未保存，任务没有开始：" + ex.getMessage());
         } catch (RuntimeException ex) {
@@ -437,15 +467,27 @@ public final class VcFlowView extends ScrollView {
     }
 
     private void understandIntent() {
+        if (semanticBusy) return;
+        if (scope().isEmpty()) {
+            showMessage("请先选择本次处理目录或照片。Android 不允许助手直接读取手机根目录；系统授权后才能寻找文件。");
+            return;
+        }
         final String request = intentInput.getText() == null ? "" : intentInput.getText().toString().trim();
         if (request.length() < 2) { showMessage("请先用一句话描述任务。"); return; }
+        manualMode = false;
+        manualReady = false;
+        riskReady = false;
+        llmReady = false;
+        setAuthorizeEnabled(false);
         final long requestRevision = ++llmRevision;
+        final Mode selectedMode = mode;
         understandButton.setEnabled(false);
         understandButton.setText("正在理解任务…");
         planLabel.setText("正在请求模型计划。只发送这句任务描述；照片、文件名、文件内容和审计记录不会发送。");
         new Thread(new Runnable() { @Override public void run() {
             try {
-                final LlmIntentRouter.Decision decision = LlmIntentRouter.understand(activity.getApplicationContext(), request);
+                final LlmIntentRouter.Decision decision = LlmIntentRouter.understand(activity.getApplicationContext(),
+                    (selectedMode == Mode.ORIGINAL ? "已选择本地文件目录。" : "已选择票据照片。") + request);
                 activity.runOnUiThread(new Runnable() { @Override public void run() {
                     if (requestRevision != llmRevision) return;
                     applyDecision(decision);
@@ -476,12 +518,13 @@ public final class VcFlowView extends ScrollView {
         manualMode = false;
         manualReady = false;
         llmPlan = safe(decision.plan);
+        contentClassification = decision.contentClassification;
         llmRisk = safe(decision.risk);
         llmReady = true;
         riskReady = true;
         permissionLabel.setText(defaultPermissionNotice());
-        planLabel.setText("模型理解：" + llmPlan + "\n模型风险提示：" + llmRisk + "\n下一步：选择本次范围；系统文件授权不等于任务授权。");
-        setAuthorizeEnabled(false);
+        planLabel.setText(preAuthorizationText());
+        setAuthorizeEnabled(isReadyForAuthorization());
     }
 
     private void invalidateLlmDecision() {
@@ -513,6 +556,7 @@ public final class VcFlowView extends ScrollView {
         String allowed = mode == Mode.TICKET
                 ? "允许：本地提取摘要、生成待核对报告。\n禁止：上传、发送或自动分享原图。"
                 : "允许：只读扫描、去重、生成本地归档和报告。\n禁止：删除、移动、上传或发送原文件。";
+        if (!manualMode && contentClassification && mode == Mode.ORIGINAL) allowed += "\n内容分类：先本地读取 Office/文本，再单独确认上传摘要和分类计划。";
         String notice = manualMode ? defaultPermissionNotice() : "模型风险提示：" + safe(llmRisk);
         String plan = manualMode ? "手动选择：" + (mode == Mode.TICKET ? "票据整理" : "原文件整理") : "模型理解：" + safe(llmPlan);
         return plan + "\n" + allowed + "\n" + notice + "\n系统文件授权不等于本次任务授权；选择变化会使旧授权失效。";
@@ -522,6 +566,71 @@ public final class VcFlowView extends ScrollView {
         boolean hasScope = !scope().isEmpty();
         if (!hasScope || !riskReady) return false;
         return llmReady || (manualMode && manualReady);
+    }
+
+    private void startContentAnalysis() {
+        final String selectedScope = scope();
+        final String request = intentInput.getText().toString().trim();
+        new AlertDialog.Builder(activity).setTitle("授权本地读取内容")
+            .setMessage("将在已选目录内读取并快照文件，支持 DOCX、XLSX、PPTX、TXT、Markdown、CSV。最多30个文件。先展示实际上传摘要；当前不发送文件内容。无法读取的文件标为待核对。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("授权本地分析", (dialog, which) -> {
+                semanticBusy = true;
+                intentInput.setEnabled(false);
+                setAuthorizeEnabled(false);
+                planLabel.setText("正在本地读取文档并遮罩明显敏感字段…");
+                new Thread(() -> {
+                    try {
+                        final SemanticFiles prepared = SemanticFiles.prepare(activity.getApplicationContext(), selectedScope, request);
+                        activity.runOnUiThread(() -> showUploadPreview(prepared));
+                    } catch (Exception e) { activity.runOnUiThread(() -> endSemantic("本地分析失败：" + e.getMessage())); }
+                }, "quiet-content-preview").start();
+            }).show();
+    }
+
+    private void showUploadPreview(SemanticFiles prepared) {
+        if (activity.isFinishing() || activity.isDestroyed()) { SemanticFiles.discard(prepared.dir); return; }
+        new AlertDialog.Builder(activity).setTitle("确认发送以下摘要")
+            .setMessage("以下为实际发送给 DeepSeek 的文本。遮罩无法保证移除所有敏感信息，请检查；原文件和文件名不会发送。\n\n" + prepared.payload)
+            .setCancelable(false)
+            .setNegativeButton("取消并清除", (d,w) -> { SemanticFiles.discard(prepared.dir); endSemantic("已取消，未上传摘要。"); })
+            .setPositiveButton("确认上传并分类", (d,w) -> {
+                planLabel.setText("正在请求模型分类，完成后还需确认归档计划…");
+                new Thread(() -> {
+                    try {
+                        prepared.classify(activity.getApplicationContext());
+                        final String preview = prepared.preview();
+                        activity.runOnUiThread(() -> {
+                            if (activity.isFinishing() || activity.isDestroyed()) { SemanticFiles.discard(prepared.dir); return; }
+                            new AlertDialog.Builder(activity).setTitle("确认用途分类计划")
+                                .setMessage(preview + "仅生成资料包，不修改原文件。模型建议请核对。")
+                                .setCancelable(false)
+                                .setNegativeButton("取消并清除", (a,b) -> { SemanticFiles.discard(prepared.dir); endSemantic("已取消归档；已发送的摘要无法撤回。"); })
+                                .setPositiveButton("授权并生成资料包", (a,b) -> {
+                                    try {
+                                        semanticSummary = prepared.seal();
+                                        semanticBusy = false;
+                                        intentInput.setEnabled(true);
+                                        authorizeAndStart();
+                                        SemanticFiles.discard(prepared.dir);
+                                        semanticSummary = null;
+                                    } catch (Exception e) { SemanticFiles.discard(prepared.dir); endSemantic("分类计划保存失败，任务未开始。"); }
+                                }).show();
+                        });
+                    } catch (Exception e) {
+                        SemanticFiles.discard(prepared.dir);
+                        activity.runOnUiThread(() -> endSemantic("分类失败，未生成资料包：" + e.getMessage()));
+                    }
+                }, "quiet-content-classification").start();
+            }).show();
+    }
+
+    private void endSemantic(String message) {
+        semanticBusy = false;
+        semanticSummary = null;
+        intentInput.setEnabled(true);
+        setAuthorizeEnabled(isReadyForAuthorization());
+        showMessage(message);
     }
 
     private static String safe(String value) { return value == null || value.trim().isEmpty() ? "未知错误" : value; }

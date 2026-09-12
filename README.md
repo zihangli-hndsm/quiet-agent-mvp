@@ -18,10 +18,10 @@ flowchart LR
 ## 部署
 
 1. 在电脑下载 [v0.2.1 Release APK](https://github.com/zihangli-hndsm/quiet-agent-mvp/releases/tag/v0.2.1)，通过 USB 安装到 Android 8+；已针对 Android 12 验收。手机无需访问 GitHub。
-2. 打开 Quiet Agent，选择“票据整理”与本机照片。阅读本次范围、目的和风险后点击“授权并开始”。
+2. 当前开发版先选择工作方式和本机范围，再输入任务（可选）。手动文件整理按类型归档；输入“按用途分类我这些简历”可走内容分类：授权本地读取 → 预览并确认发送摘要 → 确认分类 → 生成资料包。Android 12 不允许系统选择器授权存储根目录，必须选择可授权的子目录。
 3. 立即切到其他应用正常使用。完成后返回查看待核对报告；导出前会再次确认并打开系统分享面板。
 
-票据识别与归档仍在本机离线运行。为展示自然语言理解，当前演示 APK 额外声明 `INTERNET`：仅把用户输入的一句话发送给模型，用于在“票据整理 / 原文件整理”之间路由并生成风险提示；照片、文件名、文件内容和审计内容不会上传。`debuggable=false`、`allowBackup=false`。原文件整理入口仍保留，并遵守相同的逐次授权。
+票据识别与规则归档仍在本机运行。当前开发版声明 `INTERNET`，任务描述发送到 DeepSeek；内容分类另行预览授权后发送遮罩后的短文本摘录（不是完整文件），文件名和审计不上传。遮罩不保证消除所有敏感信息，须检查实际预览。支持 DOCX/XLSX/PPTX 和 UTF-8 TXT/MD/CSV；每文件最多1200字符、30个文件、20 MiB/文件、200 MiB/任务。Office 提取正文、共享字符串/内联文本和幻灯片文本，不计算公式、不加载外部链接；PDF、旧版 Office、损坏或无文本文件暂归待核对。`debuggable=false`、`allowBackup=false`。
 
 ## 构建与验证
 
@@ -37,6 +37,6 @@ $env:ANDROID_HOME = "C:\path\to\android-sdk"
 python -m unittest tests/test_verify_receipt_package.py -v
 ```
 
-产物为 `build/quiet-agent-demo.apk`。构建脚本会检查最终 Manifest 无联网权限、演示包不可调试且禁用备份。12 张明确标为虚构的样例覆盖 8 张清晰票据、2 张完全重复、1 张金额模糊和 1 张非票据；预期答案只存在于测试。演示步骤见 [docs/DEMO-V02.md](docs/DEMO-V02.md)，真机结果见 [docs/VALIDATION.md](docs/VALIDATION.md)。
+产物为 `build/quiet-agent-demo.apk`。构建检查联网声明、不可调试和禁用备份。`QUIET_LLM_KEY_FILE` 指向本地密钥文件（仅嵌入本机 APK，不入库）。测试 APK 的 `content` 场景用虚构 Office 文档验证提取、遮罩、真实云端分类、授权服务、ZIP 校验和快照清理。已发布 v0.2.1 不包含这些开发版功能。
 
 审计凭证用于核对告知、授权、任务绑定、阶段事件和文件哈希，不代表第三方认证或不可篡改。导出的副本不受“清除此任务本地数据”影响。

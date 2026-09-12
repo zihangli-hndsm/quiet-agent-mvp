@@ -22,6 +22,7 @@ public final class CoreTests {
         testPlan();
         testArchiveAndManifest();
         testMutationCancellationAndLimits();
+        testSemanticPaths();
         System.out.println("CoreTests OK (" + assertions + " assertions)");
     }
 
@@ -89,6 +90,23 @@ public final class CoreTests {
         final MemSource tooMany = new MemSource("many");
         for (int i = 0; i < Engine.MAX_FILES + 1; i++) tooMany.add("f" + i + ".txt", "x");
         expectIo(new IoCall() { public void call() throws Exception { Engine.run(tooMany, Plan.parse("不去重，按类型归档"), Files.createTempDirectory("quiet-core-many").toFile(), null, null); } }, "file limit");
+    }
+
+    private static void testSemanticPaths() throws Exception {
+        MemSource source = new MemSource("用途建议");
+        source.add("技术岗位简历/resume.docx", "synthetic office snapshot");
+        source.add("技术岗位简历/copy.docx", "synthetic office snapshot");
+        File job = Files.createTempDirectory("quiet-job-metadata").toFile();
+        Files.write(new File(job,"pending.properties").toPath(), "authorization".getBytes(StandardCharsets.UTF_8));
+        Engine.Result result = Engine.run(source, Plan.semantic(), new File(job,"archive-output"), null, null);
+        check(result.unique == 1 && result.duplicates == 1, "semantic duplicates");
+        check(readZip(result.archive).containsKey("技术岗位简历/resume.docx"), "confirmed category preserved");
+        check(readUtf8(result.manifest).contains("\"ruleBased\":false"), "model provenance");
+        check(new File(job,"pending.properties").isFile(), "authorization metadata preserved");
+        MemSource unsafe = new MemSource("unsafe"); unsafe.add("../escape.docx", "data");
+        File output = Files.createTempDirectory("quiet-unsafe-category").toFile();
+        try { Engine.run(unsafe, Plan.semantic(), output, null, null); throw new AssertionError("unsafe category accepted"); }
+        catch (IllegalArgumentException expected) { check(output.listFiles().length == 0, "unsafe category produces no output"); }
     }
 
     private interface IoCall { void call() throws Exception; }

@@ -330,7 +330,7 @@ public final class Engine {
                                       String archiveHash) throws IOException {
         StringBuilder b = new StringBuilder(4096);
         b.append("{\n  \"schema\":\"quiet-agent-manifest-v1\",\n");
-        b.append("  \"ruleBased\":true,\n  \"source\":").append(q(sourceDescription)).append(",\n");
+        b.append("  \"ruleBased\":").append(plan.grouping != Plan.Grouping.PURPOSE).append(",\n  \"source\":").append(q(sourceDescription)).append(",\n");
         b.append("  \"snapshot\":\"已读取候选列表并逐项读取内容；不是全局事务，不锁定用户文件\",\n");
         b.append("  \"plan\":").append(q(plan.summary())).append(",\n");
         b.append("  \"scanned\":").append(scanned).append(",\n  \"selected\":").append(selected).append(",\n");
@@ -369,6 +369,13 @@ public final class Engine {
 
     private static String zipPath(Plan plan, Entry e) {
         String name = baseName(e.path);
+        if (plan.grouping == Plan.Grouping.PURPOSE) {
+            String[] parts = e.path.split("/", -1);
+            if (parts.length != 2 || !parts[0].matches("[\\p{IsHan}A-Za-z0-9]{1,16}")
+                    || name.equals(".") || name.equals("..") || name.contains("\\") || name.isEmpty())
+                throw new IllegalArgumentException("用途分类路径无效");
+            return parts[0] + "/" + name;
+        }
         if (plan.grouping == Plan.Grouping.TYPE) return typeOf(name) + "/" + name;
         if (plan.grouping == Plan.Grouping.MONTH) {
             ZonedDateTime z = Instant.ofEpochMilli(Math.max(0L, e.modifiedMillis)).atZone(ZoneId.systemDefault());
