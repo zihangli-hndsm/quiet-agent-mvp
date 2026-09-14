@@ -18,7 +18,7 @@ public final class EntryNotification {
         channel.setSound(null, null);
         channel.enableVibration(false);
         manager.createNotificationChannel(channel);
-        Intent entry = new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        Intent entry = new Intent(context, app.quietagent.workspace.WorkspaceActivity.class).putExtra("jobId",jobId).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent open = PendingIntent.getActivity(context, 42, entry, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder builder = new Notification.Builder(context, CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_menu_edit).setContentTitle("Quiet Agent")

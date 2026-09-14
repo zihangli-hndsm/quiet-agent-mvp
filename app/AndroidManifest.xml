@@ -15,6 +15,12 @@
   </activity>
   <activity android:name=".ReportActivity" android:exported="false"/>
   <activity android:name=".SmsActivity" android:exported="false"/>
+  <activity android:name=".workspace.WorkspaceActivity" android:exported="false"/>
+  <activity android:name=".workspace.WorkspaceManagerActivity" android:exported="false"/>
+  <activity android:name=".workspace.WorkspaceResultsActivity" android:exported="false"/>
+  <activity android:name=".workspace.WorkspaceSmsActivity" android:exported="false"/>
+  <service android:name=".workspace.WorkspaceService" android:exported="false" android:foregroundServiceType="dataSync"/>
+  <service android:name=".workspace.UnifiedAgentService" android:exported="false" android:foregroundServiceType="dataSync"/>
   <service android:name=".SmsAnalysisService" android:exported="false" android:foregroundServiceType="dataSync"/>
   <provider android:name=".SmsShareProvider" android:authorities="app.quietagent.sms-results" android:exported="false" android:grantUriPermissions="true"/>
   <service android:name=".TaskService" android:exported="false" android:foregroundServiceType="dataSync"/>

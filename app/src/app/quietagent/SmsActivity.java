@@ -119,7 +119,7 @@ public final class SmsActivity extends Activity {
             for(int i=0;i<rows.length();i++){
                 JSONObject r=rows.getJSONObject(i);boolean excluded=r.getBoolean("excluded");String body=r.getString("body");
                 chosen[i]=!excluded;labels[i]=r.optString("sender")+" · "+android.text.format.DateFormat.format("MM-dd HH:mm",r.getLong("date"))+"\n"
-                    +(excluded?"验证码或超长短信：不参与云端分析":body.substring(0,Math.min(200,body.length())));
+                    +(excluded?SmsData.exclusionReason(body)+"：不参与云端分析":body.substring(0,Math.min(200,body.length())));
             }
             new AlertDialog.Builder(this).setTitle("选择本次处理的短信（"+rows.length()+"条）").setCancelable(false)
                 .setMultiChoiceItems(labels,chosen,(dialog,which,checked)->{
