@@ -162,6 +162,10 @@ public final class VcFlowView extends ScrollView {
         sms.setContentDescription("mode-sms");
         sms.setOnClickListener(v -> activity.startActivity(new Intent(activity, app.quietagent.SmsActivity.class)));
         modeCard.addView(sms, lp(-1, 48, 18, 0, 18, 16));
+        Button workspace = outlineButton("受控工作区 · 比较简历 / Office 文件");
+        workspace.setContentDescription("mode-workspace");
+        workspace.setOnClickListener(v -> activity.startActivity(new Intent(activity, app.quietagent.workspace.WorkspaceActivity.class)));
+        modeCard.addView(workspace, lp(-1, 48, 18, 0, 18, 16));
 
         LinearLayout selectCard = card();
         root.addView(selectCard, lp(-1, -2, 0, 0, 0, 12));

@@ -12,6 +12,10 @@ public final class SmsChecks {
     private interface Call{void run()throws Exception;}
     private static void rejects(Call action)throws Exception{try{action.run();throw new AssertionError("operation accepted");}catch(IOException|IllegalArgumentException expected){}}
     public static void run(Instrumentation runner,JSONObject report)throws Exception{
+        if(!"含验证码".equals(SmsData.exclusionReason("您的验证码是123456")))throw new AssertionError("验证码排除原因");
+        StringBuilder oversized=new StringBuilder();for(int i=0;i<=SmsData.MAX_BODY_CHARS;i++)oversized.append('a');
+        if(!"短信过长（超过2000字）".equals(SmsData.exclusionReason(oversized.toString())))throw new AssertionError("超长排除原因");
+        if(!SmsData.exclusionReason("验证码"+oversized).contains("；"))throw new AssertionError("组合排除原因");
         Context c=runner.getTargetContext();String originalDefault=android.provider.Telephony.Sms.getDefaultSmsPackage(c);
         report.put("defaultSmsPackage",originalDefault==null?JSONObject.NULL:originalDefault);
         boolean launchable=originalDefault!=null&&c.getPackageManager().getLaunchIntentForPackage(originalDefault)!=null;

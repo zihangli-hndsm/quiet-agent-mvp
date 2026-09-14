@@ -90,7 +90,7 @@ public final class MainActivity extends Activity {
         recoverInterruptedTask();
         qaMode = getIntent() != null && getIntent().getBooleanExtra("qa_test", false);
         if (qaMode) buildScreen();
-        else buildVcScreen();
+        else { startActivity(new Intent(this, app.quietagent.workspace.WorkspaceActivity.class)); finish(); return; }
         if (!TaskService.isRunning()) EntryNotification.show(this, false, null);
     }
 
